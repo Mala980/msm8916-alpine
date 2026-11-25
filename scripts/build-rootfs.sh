@@ -34,6 +34,7 @@ USB0_IP="${USB0_IP:-192.168.42.1/24}"
 USB_GADGET_INSTALL="${USB_GADGET_INSTALL:-yes}"
 USB_GADGET_OTG="${USB_GADGET_OTG:-no}"
 USB_GADGET_ENABLED="${USB_GADGET_ENABLED:-yes}"
+USB_GADGET_ADB="${USB_GADGET_ADB:-yes}"
 OCTOPRINT_PREINSTALL="${OCTOPRINT_PREINSTALL:-no}"
 ZORAXY_PREINSTALL="${ZORAXY_PREINSTALL:-no}"
 DOCKER_ENABLE="${DOCKER_ENABLE:-no}"
@@ -315,6 +316,36 @@ cat > "$CHROOT/etc/fstab" <<EOF
 /dev/mmcblk0p14    /        ext4    defaults    0 1
 EOF
 
+# ADB daemon — Alpine ships no adbd package (its android-tools is
+# client-only), so compile the HandsomeYingyan/android-tools adbd
+# (AOSP, FunctionFS) from source inside the chroot. The musl
+# compatibility layer lives in configs/adbd/ (stub sys/cdefs.h,
+# prctl/capset declarations, a capset syscall wrapper; the source's
+# own base64.c already provides b64_pton). Pinned commit for
+# reproducibility. This build is the HandsomeMod-style insecure
+# adbd: root shell without RSA authentication — see docs/adb.md.
+if [ "$USB_GADGET_ADB" = "yes" ]; then
+    echo "[*] Building adbd from source..."
+    ADBD_SRC_REPO="https://github.com/HandsomeYingyan/android-tools.git"
+    ADBD_SRC_COMMIT="9a1d541442f011d3a3d780ba5a5b650c7d7cad40"
+    rm -rf "$STAGING/android-tools"
+    git clone -q "$ADBD_SRC_REPO" "$STAGING/android-tools"
+    git -C "$STAGING/android-tools" checkout -q "$ADBD_SRC_COMMIT"
+    cp configs/adbd/adbd.mk "$STAGING/android-tools/adbd.mk"
+    cp -r configs/adbd/compat "$STAGING/android-tools/compat"
+    mkdir -p "$CHROOT/tmp/android-tools"
+    cp -a "$STAGING/android-tools/." "$CHROOT/tmp/android-tools/"
+    chroot "$CHROOT" ash -l -c "
+        apk add --no-cache libcrypto3 zlib
+        apk add --no-cache --virtual .adbd-build gcc musl-dev make zlib-dev openssl-dev linux-headers pkgconf
+        cd /tmp/android-tools && make -f adbd.mk -j\$(nproc)
+        install -Dm0755 adbd /usr/bin/adbd
+        apk del .adbd-build
+    "
+    rm -rf "$CHROOT/tmp/android-tools"
+    echo "[+] adbd installed to /usr/bin/adbd"
+fi
+
 # USB gadget
 if [ "$USB_GADGET_INSTALL" = "yes" ]; then
     install -Dm0755 configs/usb-gadget/usb-gadget.sh "$CHROOT/usr/sbin/usb-gadget"
@@ -324,6 +355,7 @@ if [ "$USB_GADGET_INSTALL" = "yes" ]; then
 
 USE_NCM=1           # 1 = NCM (Linux/Mac), 0 = RNDIS (Windows)
 ENABLE_OTG=$([ "$USB_GADGET_OTG" = "yes" ] && echo 1 || echo 0)        # 1 = OTG Host mode, 0 = Gadget mode
+ENABLE_ADB=$([ "$USB_GADGET_ADB" = "yes" ] && echo 1 || echo 0)        # 1 = add ADB FunctionFS function (ffs.adb)
 EOF
 
     # Enable USB gadget service (controlled by USB_GADGET_ENABLED profile setting)
