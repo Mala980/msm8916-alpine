@@ -118,6 +118,7 @@ apk add --no-cache --no-interactive \
     networkmanager-tui \
     nano \
     bash bash-completion \
+    chrony \
     ca-certificates
 "
 
@@ -163,6 +164,7 @@ rc-update add savecache shutdown
 
 # Enable essential application services
 rc-update add dropbear default
+rc-update add chronyd default
 rc-update add modemmanager default
 rc-update add networkmanager default
 rc-update add rmtfs default
@@ -202,6 +204,7 @@ fi
 
 # Chrony configuration
 echo "[*] Configuring Chrony..."
+mkdir -p "$CHROOT/etc/chrony"
 cat > "$CHROOT/etc/chrony/chrony.conf" <<'CHRONYEOF'
 # NTP servers
 server 0.pool.ntp.org iburst
