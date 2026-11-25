@@ -1,4 +1,11 @@
 #!/bin/bash
+# Debian rootfs builder for MSM8916 — Debian branch.
+# Ported from the Alpine build-rootfs.sh (branch main) keeping the same
+# profile contract, outputs (rootfs.tgz + rootfs/ dir) and config layout.
+# Debian userland via debootstrap (reference: kinsamanka/OpenStick-Builder
+# branch main, scripts/debootstrap.sh + scripts/setup.sh); the kernel is
+# still the postmarketOS linux-postmarketos-qcom-msm8916 .apk, extracted
+# into the rootfs the same way OpenStick-Builder's Debian build does it.
 set -euo pipefail
 
 # ponytail: load order: default profile → selected profile → local overrides
@@ -23,10 +30,12 @@ STAGING="$(mktemp -d)"
 CHROOT="$STAGING/rootfs"
 
 HOST_NAME="${HOST_NAME:-uz801a}"
-RELEASE="${RELEASE:-v3.21}"
+RELEASE="${RELEASE:-trixie}"
+DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
+DEBIAN_SECURITY_MIRROR="${DEBIAN_SECURITY_MIRROR:-http://deb.debian.org/debian-security}"
 PMOS_RELEASE="${PMOS_RELEASE:-v25.06}"
-MIRROR="${MIRROR:-http://dl-cdn.alpinelinux.org/alpine}"
 PMOS_MIRROR="${PMOS_MIRROR:-http://mirror.postmarketos.org/postmarketos}"
+KERNEL_VERSION="${KERNEL_VERSION:-6.12.1-r2}"
 
 USERNAME="${USERNAME:-user}"
 DTB_FILE="${DTB_FILE:-msm8916-yiming-uz801v3.dtb}"
@@ -34,6 +43,7 @@ USB0_IP="${USB0_IP:-192.168.42.1/24}"
 USB_GADGET_INSTALL="${USB_GADGET_INSTALL:-yes}"
 USB_GADGET_OTG="${USB_GADGET_OTG:-no}"
 USB_GADGET_ENABLED="${USB_GADGET_ENABLED:-yes}"
+USB_GADGET_ADB="${USB_GADGET_ADB:-no}"
 OCTOPRINT_PREINSTALL="${OCTOPRINT_PREINSTALL:-no}"
 ZORAXY_PREINSTALL="${ZORAXY_PREINSTALL:-no}"
 DOCKER_ENABLE="${DOCKER_ENABLE:-no}"
@@ -48,8 +58,14 @@ PROFILE_SERVICES="${PROFILE_SERVICES:-}"
     exit 1
 }
 
-# Cleanup on exit
-trap 'rm -rf "$STAGING"' EXIT INT TERM
+# Cleanup on exit (unmount chroot bind mounts first)
+cleanup() {
+    for a in proc sys dev/pts dev run; do
+        mountpoint -q "$CHROOT/$a" 2>/dev/null && umount "$CHROOT/$a" || true
+    done
+    rm -rf "$STAGING"
+}
+trap cleanup EXIT INT TERM
 
 # Validations
 [ -d "$OUT_DIR" ] || mkdir -p "$OUT_DIR"
@@ -60,119 +76,112 @@ IS_ARM64=false
 if [ "$IS_ARM64" = "false" ]; then
     command -v qemu-aarch64-static >/dev/null || { echo "Falta qemu-aarch64-static"; exit 1; }
 fi
+command -v debootstrap >/dev/null || { echo "ERROR: debootstrap not found (run scripts/build-deps.sh)"; exit 1; }
 
 echo "[*] Profile: ${PROFILE:-default}"
 echo "[*] Output directory: $OUT_DIR"
 echo "[*] Temporary staging: $STAGING"
+echo "[*] Debian release: $RELEASE (kernel: postmarketOS $KERNEL_VERSION from $PMOS_RELEASE)"
 
-# Create rootfs
+# --- Bootstrap Debian (foreign + second stage, like OpenStick-Builder) ---
 mkdir -p "$CHROOT"
+echo "[*] Bootstrapping Debian ($RELEASE, arm64)..."
+debootstrap --foreign --arch arm64 \
+    --keyring /usr/share/keyrings/debian-archive-keyring.gpg \
+    "$RELEASE" "$CHROOT" "$DEBIAN_MIRROR"
 
-# Setup APK repositories
-mkdir -p "$CHROOT/etc/apk"
-cat << EOF > "$CHROOT/etc/apk/repositories"
-${MIRROR}/${RELEASE}/main
-${MIRROR}/${RELEASE}/community
-${PMOS_MIRROR}/${PMOS_RELEASE}
+if [ "$IS_ARM64" = "false" ]; then
+    mkdir -p "$CHROOT/usr/bin"
+    cp "$(which qemu-aarch64-static)" "$CHROOT/usr/bin/"
+fi
+
+cat << EOF > "$CHROOT/etc/apt/sources.list"
+deb ${DEBIAN_MIRROR} ${RELEASE} main contrib non-free-firmware
+deb ${DEBIAN_SECURITY_MIRROR} ${RELEASE}-security main contrib non-free-firmware
+deb ${DEBIAN_MIRROR} ${RELEASE}-updates main contrib non-free-firmware
 EOF
 
-# Copy DNS config
-cp /etc/resolv.conf "$CHROOT/etc/"
+mount -t proc proc "$CHROOT/proc/"
+mount -t sysfs sys "$CHROOT/sys/"
+mount -o bind /dev/ "$CHROOT/dev/"
+mount -o bind /dev/pts/ "$CHROOT/dev/pts/"
+mount -o bind /run "$CHROOT/run/"
+cp /etc/resolv.conf "$CHROOT/etc/resolv.conf"
 
-# Copy QEMU static (only needed when cross-building)
-mkdir -p "$CHROOT/usr/bin"
-if [ "$IS_ARM64" = "false" ]; then
-    cp $(which qemu-aarch64-static) "$CHROOT/usr/bin/"
-fi
+chroot "$CHROOT" /bin/bash /debootstrap/debootstrap --second-stage
 
-# Download and use apk.static
-echo "[*] Downloading apk.static..."
-if [ "$IS_ARM64" = "true" ]; then
-    APK_STATIC_ARCH="aarch64"
-else
-    APK_STATIC_ARCH="x86_64"
-fi
-wget -q "https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.6/${APK_STATIC_ARCH}/apk.static" -O "$STAGING/apk.static"
-chmod a+x "$STAGING/apk.static"
-
-# Bootstrap Alpine
-echo "[*] Bootstrapping Alpine Linux..."
-"$STAGING/apk.static" add -p "$CHROOT" --initdb -U --arch aarch64 --allow-untrusted alpine-base
-
+# --- Base packages (Debian equivalents of the Alpine base set + OpenStick's) ---
 echo "[*] Installing packages..."
-chroot "$CHROOT" ash -l -c "
-apk add --no-cache --no-interactive --allow-untrusted postmarketos-keys
-apk add --no-cache --no-interactive \
-    openrc \
-    eudev udev-init-scripts udev-init-scripts-openrc \
-    shadow sudo \
-    e2fsprogs e2fsprogs-extra \
-    linux-postmarketos-qcom-msm8916 \
-    msm-firmware-loader \
-    rmtfs \
+cat > "$STAGING/setup.sh" <<'SETUPEOF'
+#!/bin/sh -e
+export DEBIAN_FRONTEND=noninteractive
+export DEBCONF_NONINTERACTIVE_SEEN=true
+
+echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections
+echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections
+echo "locales locales/default_environment_locale select en_US.UTF-8" | debconf-set-selections
+echo "locales locales/locales_to_be_generated multiselect en_US.UTF-8 UTF-8" | debconf-set-selections
+rm -f /etc/locale.gen
+
+apt-get update -qq
+# Base set: Debian equivalents of the Alpine branch base packages, merged
+# with OpenStick-Builder's Debian setup.sh list. The MSM firmware loader
+# itself is not a Debian package; it is installed from configs/ below.
+apt-get install -qqy --no-install-recommends \
+    systemd systemd-sysv udev \
+    sudo passwd \
+    e2fsprogs \
+    locales tzdata \
+    network-manager \
     modemmanager \
-    networkmanager networkmanager-cli networkmanager-wifi networkmanager-wwan networkmanager-dnsmasq \
-    wpa_supplicant \
-    iptables \
-    dropbear \
-    networkmanager-tui \
-    nano \
-    bash bash-completion \
+    rmtfs qrtr-tools \
+    wpasupplicant wireless-regdb iw \
+    iptables iproute2 \
+    dnsmasq hostapd bridge-utils \
+    openssh-server \
+    chrony \
+    zram-tools \
+    nano bash bash-completion \
     ca-certificates
-"
+SETUPEOF
+cp "$STAGING/setup.sh" "$CHROOT/setup.sh"
+chroot "$CHROOT" /bin/sh -c /setup.sh
+rm -f "$CHROOT/setup.sh"
 
 # Install profile-specific packages (profile contract — separate from base and user packages)
 if [ -n "${PROFILE_PACKAGES:-}" ]; then
     _PPKG_LIST="$(echo "$PROFILE_PACKAGES" | tr '\n' ' ' | tr -s ' ')"
     echo "[*] Installing profile packages (${PROFILE:-default}): ${_PPKG_LIST}"
-    chroot "$CHROOT" ash -l -c "apk add --no-cache --no-interactive ${_PPKG_LIST}"
+    chroot "$CHROOT" /bin/sh -c "DEBIAN_FRONTEND=noninteractive apt-get install -qqy --no-install-recommends ${_PPKG_LIST}"
 fi
 
 # Install extra packages from variables.env (user/local overrides)
 if [ -n "${PACKAGES:-}" ]; then
     _PKG_LIST="$(echo "$PACKAGES" | tr '\n' ' ' | tr -s ' ')"
     echo "[*] Installing user packages..."
-    chroot "$CHROOT" ash -l -c "apk add --no-cache --no-interactive ${_PKG_LIST}"
+    chroot "$CHROOT" /bin/sh -c "DEBIAN_FRONTEND=noninteractive apt-get install -qqy --no-install-recommends ${_PKG_LIST}"
 fi
 
-# Setup Alpine
-echo "[*] Setting up Alpine..."
-chroot "$CHROOT" ash -l -c "
-# Create user
+# --- Kernel from postmarketOS (.apk extracted, OpenStick-Builder method) ---
+echo "[*] Installing postmarketOS kernel $KERNEL_VERSION..."
+wget -q -O - "${PMOS_MIRROR}/${PMOS_RELEASE}/aarch64/linux-postmarketos-qcom-msm8916-${KERNEL_VERSION}.apk" \
+    | tar xzf - -C "$CHROOT" --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null || {
+        echo "ERROR: failed to download/extract kernel apk (check KERNEL_VERSION=$KERNEL_VERSION against $PMOS_RELEASE)"
+        exit 1
+    }
+# Module dependencies for the extracted kernel
+_KERNEL_REL="$(ls "$CHROOT/lib/modules" | head -n1)"
+if [ -n "$_KERNEL_REL" ]; then
+    chroot "$CHROOT" /bin/sh -c "depmod ${_KERNEL_REL} || true"
+fi
+
+# --- User + base setup ---
+echo "[*] Setting up Debian..."
+chroot "$CHROOT" /bin/sh -c "
 echo ${USERNAME}:${PASSWORD}::::/home/${USERNAME}:/bin/bash | newusers
-
-# Set up bash for the user
-printf 'PS1=\"\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]$ \"\n' > /home/${USERNAME}/.bash_profile
+printf 'PS1=\"\\[\\033[01;32m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\$ \"\\n' > /home/${USERNAME}/.bash_profile
 chown ${USERNAME}:${USERNAME} /home/${USERNAME}/.bash_profile
-
-# Enable system services
-rc-update add devfs sysinit
-rc-update add dmesg sysinit
-rc-update add udev sysinit
-rc-update add udev-trigger sysinit
-rc-update add udev-settle sysinit
-rc-update add udev-postmount default
-rc-update add hwclock boot
-rc-update add modules boot
-rc-update add sysctl boot
-rc-update add hostname boot
-rc-update add bootmisc boot
-rc-update add mount-ro shutdown
-rc-update add killprocs shutdown
-rc-update add savecache shutdown
-
-# Enable essential application services
-rc-update add dropbear default
-rc-update add modemmanager default
-rc-update add networkmanager default
-rc-update add rmtfs default
-rc-update add local default
-
-# Enable profile-specific services (profile contract — separate from base and user services)
-$(for svc in ${PROFILE_SERVICES:-}; do echo "rc-update add $svc default"; done)
-
-# Enable extra services from variables.env (user/local overrides)
-$(for svc in ${SERVICES_AUTOSTART:-}; do echo "rc-update add $svc default"; done)
+passwd -d root || true
 "
 
 # Sudo config
@@ -180,11 +189,27 @@ install -d -m0750 "$CHROOT/etc/sudoers.d"
 echo "${USERNAME} ALL=(ALL:ALL) NOPASSWD: ALL" > "$CHROOT/etc/sudoers.d/${USERNAME}"
 chmod 0440 "$CHROOT/etc/sudoers.d/${USERNAME}"
 
-# Docker install + configuration (profile-driven)
+# Hostname
+echo "$HOST_NAME" > "$CHROOT/etc/hostname"
+sed -i "/localhost/ s/$/ ${HOST_NAME}/" "$CHROOT/etc/hosts"
+
+# --- systemd units (Debian branch replaces OpenRC .init files) ---
+echo "[*] Installing systemd units..."
+install -Dm0644 configs/systemd/msm-firmware-loader.service "$CHROOT/etc/systemd/system/msm-firmware-loader.service"
+install -Dm0755 configs/msm-firmware-loader/msm-firmware-loader.sh "$CHROOT/usr/sbin/msm-firmware-loader.sh"
+mkdir -p "$CHROOT/lib/firmware/msm-firmware-loader"
+install -Dm0644 configs/systemd/usb-gadget.service "$CHROOT/etc/systemd/system/usb-gadget.service"
+install -Dm0644 configs/systemd/expand-rootfs.service "$CHROOT/etc/systemd/system/expand-rootfs.service"
+# Serial console autologin (same override as OpenStick-Builder Debian)
+mkdir -p "$CHROOT/etc/systemd/system/serial-getty@ttyMSM0.service.d"
+install -Dm0644 configs/systemd/serial-getty-override.conf \
+    "$CHROOT/etc/systemd/system/serial-getty@ttyMSM0.service.d/override.conf"
+
+# Docker install + configuration (profile-driven; Debian package: docker.io)
 if [ "$DOCKER_ENABLE" = "yes" ]; then
-    echo "[*] Installing Docker..."
-    chroot "$CHROOT" ash -l -c "apk add --no-cache --no-interactive docker"
-    chroot "$CHROOT" ash -l -c "addgroup ${USERNAME} docker; rc-update add docker default"
+    echo "[*] Installing Docker (docker.io)..."
+    chroot "$CHROOT" /bin/sh -c "DEBIAN_FRONTEND=noninteractive apt-get install -qqy --no-install-recommends docker.io"
+    chroot "$CHROOT" /bin/sh -c "adduser ${USERNAME} docker || true"
     echo "[*] Configuring Docker..."
     mkdir -p "$CHROOT/etc/docker"
     cat > "$CHROOT/etc/docker/daemon.json" <<'DOCKEREOF'
@@ -200,8 +225,17 @@ if [ "$DOCKER_ENABLE" = "yes" ]; then
 DOCKEREOF
 fi
 
-# Chrony configuration
+# ADB daemon (profile/config-driven; Debian trixie ships a native arm64
+# 'adbd' package — the daemon HandsomeMod builds from AOSP sources.
+# See docs/adb.md. The gadget side lives in usb-gadget.sh: ffs.adb.)
+if [ "$USB_GADGET_ADB" = "yes" ]; then
+    echo "[*] Installing ADB daemon (adbd)..."
+    chroot "$CHROOT" /bin/sh -c "DEBIAN_FRONTEND=noninteractive apt-get install -qqy --no-install-recommends adbd"
+fi
+
+# Chrony configuration (same as Alpine branch)
 echo "[*] Configuring Chrony..."
+mkdir -p "$CHROOT/etc/chrony"
 cat > "$CHROOT/etc/chrony/chrony.conf" <<'CHRONYEOF'
 # NTP servers
 server 0.pool.ntp.org iburst
@@ -219,24 +253,30 @@ driftfile /var/lib/chrony/chrony.drift
 makestep 1.0 3
 CHRONYEOF
 
+# zram swap via zram-tools (Debian equivalent of the Alpine local.d script, ~256MB)
+echo "[*] Configuring zram swap..."
+cat > "$CHROOT/etc/default/zramswap" <<'ZRAMEOF'
+ALGO=lz4
+SIZE=256
+PRIORITY=100
+ZRAMEOF
+
 # Udev rules
 cat << EOF > "$CHROOT/etc/udev/rules.d/99-nm-usb0.rules"
 SUBSYSTEM=="net", ACTION=="add|change|move", ENV{DEVTYPE}=="gadget", ENV{NM_UNMANAGED}="0"
 EOF
 
-# Enable autologin on console
-sed -i '/^tty/ s/^/#/' "$CHROOT/etc/inittab"
-echo 'ttyMSM0::respawn:/bin/bash' >> "$CHROOT/etc/inittab"
-
-# Hostname
-echo "$HOST_NAME" > "$CHROOT/etc/hostname"
-sed -i "/localhost/ s/$/ ${HOST_NAME}/" "$CHROOT/etc/hosts"
-
-# Copy configs
+# --- NetworkManager configs (same files as Alpine branch) ---
 echo "[*] Copying configs..."
 mkdir -p "$CHROOT/etc/NetworkManager/system-connections"
 cp configs/network-manager/*.nmconnection "$CHROOT/etc/NetworkManager/system-connections/" 2>/dev/null || true
 chmod 0600 "$CHROOT/etc/NetworkManager/system-connections/"* 2>/dev/null || true
+# dns=dnsmasq (same tweak as OpenStick-Builder Debian)
+if [ -f "$CHROOT/etc/NetworkManager/NetworkManager.conf" ]; then
+    grep -q '^\[main\]' "$CHROOT/etc/NetworkManager/NetworkManager.conf" \
+        && sed -i '/\[main\]/a dns=dnsmasq' "$CHROOT/etc/NetworkManager/NetworkManager.conf" \
+        || printf '[main]\ndns=dnsmasq\n' >> "$CHROOT/etc/NetworkManager/NetworkManager.conf"
+fi
 
 # Substitute WiFi placeholders if WiFi is enabled and credentials are provided
 if [ "${WIFI_ENABLED:-yes}" = "yes" ] && [ -n "${WIFI_SSID:-}" ]; then
@@ -273,13 +313,11 @@ else
     echo "[*] USB0: static ${USB0_IP}"
     sed -i "s|__USB0_IP__|${USB0_IP}|g" "$USB0_CONN"
     if [ -n "${USB0_GW:-}" ]; then
-        # Client mode: device gets internet through the gateway
         echo "[*] USB0: gateway ${USB0_GW}, DNS ${USB0_DNS:-8.8.8.8}"
         sed -i "s|method=shared|method=manual|g" "$USB0_CONN"
         sed -i "s|never-default=true|gateway=${USB0_GW}|g" "$USB0_CONN"
         sed -i "/\[ipv4\]/a dns=${USB0_DNS:-8.8.8.8};" "$USB0_CONN"
     else
-        # Server/shared mode: device acts as router with DHCP
         cat > "$CHROOT/etc/NetworkManager/dnsmasq-shared.d/usb0.conf" << 'EOF'
 # Don't send default gateway (option 3) via DHCP
 dhcp-option=3
@@ -298,10 +336,10 @@ cp dtbs/*.dtb "$CHROOT/boot/dtbs/qcom/" 2>/dev/null || true
 mkdir -p "$CHROOT/boot/extlinux"
 cat > "$CHROOT/boot/extlinux/extlinux.conf" <<EOF
 TIMEOUT 10
-DEFAULT alpine
+DEFAULT debian
 
-LABEL alpine
-    MENU LABEL Alpine Linux
+LABEL debian
+    MENU LABEL Debian Linux
     linux /vmlinuz
     fdt /dtbs/qcom/${DTB_FILE}
     append earlycon root=/dev/mmcblk0p14 console=ttyMSM0,115200 no_framebuffer=true rw rootwait
@@ -312,57 +350,58 @@ cat > "$CHROOT/etc/fstab" <<EOF
 /dev/mmcblk0p14    /        ext4    defaults    0 1
 EOF
 
-# USB gadget
+# USB gadget (same configfs script as Alpine branch; systemd unit instead of OpenRC)
 if [ "$USB_GADGET_INSTALL" = "yes" ]; then
     install -Dm0755 configs/usb-gadget/usb-gadget.sh "$CHROOT/usr/sbin/usb-gadget"
-    install -Dm0755 configs/usb-gadget/usb-gadget.init "$CHROOT/etc/init.d/usb-gadget"
     cat > "$CHROOT/etc/usb-gadget.conf" << EOF
 # MSM8916 USB Gadget Configuration
 
 USE_NCM=1           # 1 = NCM (Linux/Mac), 0 = RNDIS (Windows)
 ENABLE_OTG=$([ "$USB_GADGET_OTG" = "yes" ] && echo 1 || echo 0)        # 1 = OTG Host mode, 0 = Gadget mode
+ENABLE_ADB=$([ "$USB_GADGET_ADB" = "yes" ] && echo 1 || echo 0)        # 1 = add ADB FunctionFS function (ffs.adb)
 EOF
-
-    # Enable USB gadget service (controlled by USB_GADGET_ENABLED profile setting)
-    if [ "$USB_GADGET_ENABLED" = "yes" ]; then
-        chroot "$CHROOT" ash -l -c "rc-update add usb-gadget default" || true
-    fi
 fi
 
-# Expand rootfs on first boot
+# Expand rootfs on first boot (same script; systemd oneshot, flag matches the script)
 install -Dm0755 configs/expand-rootfs/expand-rootfs.sh "$CHROOT/usr/sbin/expand-rootfs.sh"
-install -Dm0755 configs/expand-rootfs/expand-rootfs.init "$CHROOT/etc/init.d/expand-rootfs"
-chroot "$CHROOT" ash -l -c "rc-update add expand-rootfs boot" || true
 
-# zram swap (compressed in-RAM swap, ~256MB effective headroom)
-echo "[*] Configuring zram swap..."
-mkdir -p "$CHROOT/etc/local.d"
-cat > "$CHROOT/etc/local.d/zram.start" << 'EOF'
-#!/bin/sh
-modprobe zram
-echo 1 > /sys/block/zram0/reset
-echo lz4 > /sys/block/zram0/comp_algorithm
-echo 256M > /sys/block/zram0/disksize
-mkswap /dev/zram0
-swapon /dev/zram0
-EOF
-chmod +x "$CHROOT/etc/local.d/zram.start"
+# --- Enable services (systemd) ---
+echo "[*] Enabling services..."
+_ENABLE="NetworkManager ModemManager rmtfs ssh chrony zramswap msm-firmware-loader expand-rootfs serial-getty@ttyMSM0"
+[ "$USB_GADGET_ENABLED" = "yes" ] && [ "$USB_GADGET_INSTALL" = "yes" ] && _ENABLE="$_ENABLE usb-gadget"
+[ "$DOCKER_ENABLE" = "yes" ] && _ENABLE="$_ENABLE docker"
+for svc in ${PROFILE_SERVICES:-}; do _ENABLE="$_ENABLE $svc"; done
+for svc in ${SERVICES_AUTOSTART:-}; do _ENABLE="$_ENABLE $svc"; done
+chroot "$CHROOT" /bin/sh -c "systemctl enable $_ENABLE" || \
+    echo "[!] WARNING: systemctl enable reported errors — check unit names: $_ENABLE"
+
+# apt cleanup (keep the image small, same spirit as the Alpine --no-cache)
+chroot "$CHROOT" /bin/sh -c "apt-get clean; rm -rf /var/lib/apt/lists/* /var/log/apt/*" || true
+echo -n > "$CHROOT/root/.bash_history" || true
 
 # Stack hooks — profile-driven via STACKS (see profiles/*.env and stacks/run-*.sh)
+# NOTE (Debian branch): the OctoPrint/Zoraxy stack scripts were written for
+# Alpine/OpenRC; on Debian they are carried over structurally and are NOT
+# yet validated. The docker profile is fully supported via docker.io above.
 for _stack in ${STACKS:-}; do
     echo "[*] Running stack: $_stack"
     CHROOT="$CHROOT" STAGING="$STAGING" WORKDIR="$WORKDIR" \
         bash "$WORKDIR/stacks/run-${_stack}.sh"
 done
 
+# Unmount bind mounts before tarring (cleanup trap would race the tarball)
+for a in proc sys dev/pts dev run; do
+    mountpoint -q "$CHROOT/$a" 2>/dev/null && umount "$CHROOT/$a" || true
+done
+
 # Create tarball
 echo "[*] Creating tarball..."
-tar cpzf "$STAGING/alpine_rootfs.tgz" \
+tar cpzf "$STAGING/debian_rootfs.tgz" \
     --exclude="root/*" \
     --exclude="usr/bin/qemu-aarch64-static" \
     -C "$CHROOT" .
 
-# Copy to output directory
+# Copy to output directory (same output names as the Alpine branch)
 echo "[*] Copying rootfs to $OUT_DIR..."
 rm -rf "$OUT_DIR/rootfs"
 mkdir -p "$OUT_DIR/rootfs"
@@ -371,13 +410,13 @@ tar -C "$CHROOT" \
     --exclude="usr/bin/qemu-aarch64-static" \
     -cf - . | tar -C "$OUT_DIR/rootfs" -xf -
 
-cp "$STAGING/alpine_rootfs.tgz" "$OUT_DIR/rootfs.tgz"
+cp "$STAGING/debian_rootfs.tgz" "$OUT_DIR/rootfs.tgz"
 
-echo "[+] OK: Alpine rootfs ready in $OUT_DIR (profile: ${PROFILE:-default})"
-echo "    - Kernel: linux-postmarketos-qcom-msm8916 from ${PMOS_RELEASE}"
+echo "[+] OK: Debian rootfs ready in $OUT_DIR (profile: ${PROFILE:-default})"
+echo "    - Release: Debian ${RELEASE}"
+echo "    - Kernel: linux-postmarketos-qcom-msm8916 ${KERNEL_VERSION} from ${PMOS_RELEASE}"
 echo "    - Docker: ${DOCKER_ENABLE}"
 echo "    - Stacks: ${STACKS:-none}"
-echo "    - Chrony: enabled with NTP servers"
 echo "    - DTB: ${DTB_FILE}"
 echo "    - $OUT_DIR/rootfs/ (directory)"
 echo "    - $OUT_DIR/rootfs.tgz (tarball)"

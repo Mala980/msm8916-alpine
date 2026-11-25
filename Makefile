@@ -113,7 +113,7 @@ deploy-led: plugins
 	    'install -o root -g root -m 0755 /tmp/led-helper /usr/local/sbin/led-helper' \
 	    'install -o root -g root -m 0440 /tmp/octoprint-led /etc/sudoers.d/octoprint-led' \
 	    '{ command -v visudo >/dev/null 2>&1 && visudo -c || true; }' \
-	    'rc-service octoprint restart' \
+	    'systemctl restart octoprint' \
 	    > $$tmp/deploy-led.sh; \
 	  tar -C $$tmp -cf - . | $(SSH) $(HOST) 'tar xf - -C /tmp'; \
 	  rm -rf $$tmp

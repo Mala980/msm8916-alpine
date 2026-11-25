@@ -1,4 +1,4 @@
-# Profile Reference — MSM8916 Alpine
+# Profile Reference — MSM8916 Debian (branch debian; service commands use systemctl — see README)
 
 Profiles are declared in `profiles/*.env` and selected at build time. They control packages, services, USB mode, and which stacks are pre-installed. The build order is:
 
@@ -116,14 +116,14 @@ After flashing and first boot:
 cat /etc/octoprint-profile 2>/dev/null || echo "(no profile tag on device)"
 
 # OctoPrint profile
-rc-service octoprint status          # started
+systemctl status octoprint          # started
 ls /var/lib/octoprint/               # data dir exists
 
 # Docker profile
-rc-service docker status             # started
+systemctl status docker             # started
 
 # Zoraxy profile
-rc-service zoraxy status             # started
+systemctl status zoraxy             # started
 
 # Confirm no stray unused installer scripts
 ls ~/install-*.sh 2>/dev/null || echo "clean"

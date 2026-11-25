@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Flash Alpine Linux to MSM8916 devices entirely via EDL.
+# Flash Debian Linux to MSM8916 devices entirely via EDL.
 # Prerequisites: edl (pip install edl)
 # Usage:
 #   ./flash.sh         - Full flash (firmware + GPT + boot + rootfs)
@@ -39,7 +39,7 @@ find_image() {
     echo "$file"
 }
 
-echo "=== Alpine Linux MSM8916 EDL Flash Script ==="
+echo "=== Debian Linux MSM8916 EDL Flash Script ==="
 if [[ "$LITE_MODE" == true ]]; then
     echo "[*] Mode: LITE (boot + rootfs only)"
 else

@@ -1,0 +1,12 @@
+[Unit]
+Description=Expand rootfs filesystem on first boot
+ConditionPathExists=!/var/lib/expand-rootfs.done
+After=local-fs.target
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/expand-rootfs.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -7,7 +7,7 @@ on:
       - 'v*'
 
 env:
-  PASSWORD: "alpine-ci"
+  PASSWORD: "debian-ci"
   WIFI_SSID: "test"
   WIFI_PASS: "testpass"
   DTB_FILE: "msm8916-yiming-uz801v3.dtb"
@@ -42,7 +42,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: msm8916-alpine
+          name: msm8916-debian
           path: |
             files/firmware.zip
             files/gpt_both0.bin
