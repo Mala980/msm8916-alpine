@@ -34,7 +34,7 @@ PACKAGES="$PACKAGES bc flex bison libelf-dev libssl-dev"
 
 if [ "$ARCH" = "amd64" ]; then
     # Cross-compilers and QEMU for amd64 host targeting aarch64
-    PACKAGES="$PACKAGES g++-aarch64-linux-gnu gcc-aarch64-linux-gnu qemu-user-static"
+    PACKAGES="$PACKAGES g++-aarch64-linux-gnu gcc-aarch64-linux-gnu"
 else
     # Native compilers on arm64 — no cross-compile needed
     PACKAGES="$PACKAGES gcc g++"
@@ -42,4 +42,13 @@ fi
 
 apt update
 apt install -y --no-install-recommends $PACKAGES
+
+if [ "$ARCH" = "amd64" ]; then
+    # qemu-user-static is only a virtual package on newer Ubuntu releases
+    # (e.g. the current GitHub ubuntu-latest) and apt refuses to pick a
+    # provider automatically; qemu-user + qemu-user-binfmt ship
+    # qemu-aarch64-static there.
+    apt install -y --no-install-recommends qemu-user-static \
+        || apt install -y --no-install-recommends qemu-user qemu-user-binfmt
+fi
 rm -rf /var/lib/apt/lists/*
