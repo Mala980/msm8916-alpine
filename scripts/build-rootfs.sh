@@ -58,7 +58,7 @@ IS_ARM64=false
 [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ] && IS_ARM64=true
 
 if [ "$IS_ARM64" = "false" ]; then
-    command -v qemu-aarch64-static >/dev/null || { echo "Falta qemu-aarch64-static"; exit 1; }
+    command -v qemu-arm-static >/dev/null || { echo "Falta qemu-arm-static"; exit 1; }
 fi
 
 echo "[*] Profile: ${PROFILE:-default}"
@@ -82,7 +82,7 @@ cp /etc/resolv.conf "$CHROOT/etc/"
 # Copy QEMU static (only needed when cross-building)
 mkdir -p "$CHROOT/usr/bin"
 if [ "$IS_ARM64" = "false" ]; then
-    cp $(which qemu-aarch64-static) "$CHROOT/usr/bin/"
+    cp $(which qemu-arm-static) "$CHROOT/usr/bin/"
 fi
 
 # Download and use apk.static
@@ -97,7 +97,7 @@ chmod a+x "$STAGING/apk.static"
 
 # Bootstrap Alpine
 echo "[*] Bootstrapping Alpine Linux..."
-"$STAGING/apk.static" add -p "$CHROOT" --initdb -U --arch aarch64 --allow-untrusted alpine-base
+"$STAGING/apk.static" add -p "$CHROOT" --initdb -U --arch armv7 --allow-untrusted alpine-base
 
 echo "[*] Installing packages..."
 chroot "$CHROOT" ash -l -c "
@@ -362,7 +362,7 @@ done
 echo "[*] Creating tarball..."
 tar cpzf "$STAGING/alpine_rootfs.tgz" \
     --exclude="root/*" \
-    --exclude="usr/bin/qemu-aarch64-static" \
+    --exclude="usr/bin/qemu-arm-static" \
     -C "$CHROOT" .
 
 # Copy to output directory
@@ -371,7 +371,7 @@ rm -rf "$OUT_DIR/rootfs"
 mkdir -p "$OUT_DIR/rootfs"
 tar -C "$CHROOT" \
     --exclude="root/*" \
-    --exclude="usr/bin/qemu-aarch64-static" \
+    --exclude="usr/bin/qemu-arm-static" \
     -cf - . | tar -C "$OUT_DIR/rootfs" -xf -
 
 cp "$STAGING/alpine_rootfs.tgz" "$OUT_DIR/rootfs.tgz"

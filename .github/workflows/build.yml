@@ -45,7 +45,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: msm8916-alpine
+          name: msm8916-alpine-armv7
           path: |
             files/firmware.zip
             files/gpt_both0.bin
