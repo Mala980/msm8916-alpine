@@ -145,6 +145,7 @@ apt-get install -qqy --no-install-recommends \
     ca-certificates
 SETUPEOF
 cp "$STAGING/setup.sh" "$CHROOT/setup.sh"
+chmod +x "$CHROOT/setup.sh"
 chroot "$CHROOT" /bin/sh -c /setup.sh
 rm -f "$CHROOT/setup.sh"
 
