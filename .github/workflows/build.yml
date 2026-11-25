@@ -1,3 +1,4 @@
+# Build workflow — Debian/Alpine rootfs images for MSM8916 (see README)
 name: Build
 
 on:
