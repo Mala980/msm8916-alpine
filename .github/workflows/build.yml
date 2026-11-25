@@ -6,6 +6,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 env:
   PASSWORD: "debian-ci"
   WIFI_SSID: "test"
@@ -52,14 +55,23 @@ jobs:
             files/boot.img.gz
 
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+            TITLE="Release ${{ github.ref_name }}"
+          else
+            TAG="latest-${{ github.ref_name }}"
+            TITLE="Latest build (${{ github.ref_name }})"
+          fi
+          # Replace any previous rolling release for this ref, so the
+          # stable download URL always serves the newest good build.
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" \
             files/firmware.zip \
             files/gpt_both0.bin \
             files/rootfs.img.gz \
             files/boot.img.gz \
-            --title "Release ${{ github.ref_name }}" \
-            --generate-notes
+            --title "$TITLE" \
+            --notes "Automated build of ${{ github.ref_name }} at commit ${{ github.sha }} (Actions run ${{ github.run_id }}). Flash files for MSM8916: firmware.zip, gpt_both0.bin, rootfs.img.gz, boot.img.gz."
