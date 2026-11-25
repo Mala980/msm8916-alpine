@@ -165,11 +165,23 @@ fi
 
 # --- Kernel from postmarketOS (.apk extracted, OpenStick-Builder method) ---
 echo "[*] Installing postmarketOS kernel $KERNEL_VERSION..."
+# --keep-directory-symlink: the .apk carries a top-level lib/ directory;
+# extracting it over trixie's usrmerge /lib -> usr/lib symlink would
+# replace the symlink with a real directory holding only lib/modules,
+# breaking the dynamic loader (/lib/ld-linux-aarch64.so.1) for every
+# subsequent chroot call.
 wget -q -O - "${PMOS_MIRROR}/${PMOS_RELEASE}/aarch64/linux-postmarketos-qcom-msm8916-${KERNEL_VERSION}.apk" \
-    | tar xzf - -C "$CHROOT" --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null || {
+    | tar xzf - -C "$CHROOT" --keep-directory-symlink --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null || {
         echo "ERROR: failed to download/extract kernel apk (check KERNEL_VERSION=$KERNEL_VERSION against $PMOS_RELEASE)"
         exit 1
     }
+# Safety net: if /lib still ended up as a real directory, merge its
+# contents into usr/lib and restore the usrmerge symlink.
+if [ -d "$CHROOT/lib" ] && [ ! -L "$CHROOT/lib" ]; then
+    cp -a "$CHROOT/lib/." "$CHROOT/usr/lib/"
+    rm -rf "$CHROOT/lib"
+    ln -s usr/lib "$CHROOT/lib"
+fi
 # Module dependencies for the extracted kernel
 _KERNEL_REL="$(ls "$CHROOT/lib/modules" | head -n1)"
 if [ -n "$_KERNEL_REL" ]; then
