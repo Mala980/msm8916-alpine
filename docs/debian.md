@@ -11,7 +11,7 @@ Only the userland construction differs:
 | Release | Alpine v3.21 | Debian trixie (`RELEASE`) |
 | Packages | `apk add` | `apt-get install` (Debian names, e.g. `docker.io`, `openssh-server`, `zram-tools`) |
 | Init | OpenRC (`.init` files, `rc-update`) | systemd (units in `configs/systemd/`, `systemctl enable`) |
-| Kernel | `linux-postmarketos-qcom-msm8916` apk installed via apk from pmOS repo v25.06 | Same kernel (6.12.1-r2), `.apk` downloaded from the pmOS mirror and extracted into the rootfs — the method used by OpenStick-Builder's Debian build |
+| Kernel | `linux-postmarketos-qcom-msm8916` apk installed via apk from pmOS repo v26.06 | Same kernel (6.12.1-r5), `.apk` downloaded from the pmOS mirror and extracted into the rootfs — the method used by OpenStick-Builder's Debian build |
 | Firmware blobs | `msm-firmware-loader` apk | `configs/msm-firmware-loader/msm-firmware-loader.sh` + `msm-firmware-loader.service` (from OpenStick-Builder, MIT) |
 | SSH | Dropbear | OpenSSH server |
 | zram | `/etc/local.d/zram.start` script | `zram-tools` (`/etc/default/zramswap`, 256MB lz4) |
@@ -36,4 +36,4 @@ branch `main` — `scripts/debootstrap.sh`, `scripts/setup.sh`,
 - ADB (`USB_GADGET_ADB="yes"`) installs Debian's native `adbd` package
   and adds the FunctionFS `ffs.adb` function to the existing composite
   gadget — see [docs/adb.md](adb.md). Kernel support verified:
-  `usb_f_fs.ko` ships in the pmOS 6.12.1-r2 kernel package.
+  `usb_f_fs.ko` ships in the pmOS 6.12.1-r5 kernel package.

@@ -46,7 +46,7 @@ added as a second function to the existing composite gadget in
    first would enumerate a gadget whose ADB interface is not ready.
 
 Kernel support is verified for the exact kernel this branch installs:
-the postmarketOS `linux-postmarketos-qcom-msm8916` 6.12.1-r2 .apk ships
+the postmarketOS `linux-postmarketos-qcom-msm8916` 6.12.1-r5 .apk ships
 `usb_f_fs.ko` and `libcomposite.ko` (checked in `modules.order` /
 `kernel/drivers/usb/gadget/function/` of the extracted package).
 

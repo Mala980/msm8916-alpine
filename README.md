@@ -12,7 +12,7 @@ Debian rootfs builder for MSM8916-based devices (dongles and MiFi routers) with 
 
 ## Features
 
-- **Debian trixie** with postmarketOS v25.06 kernel (6.12.1, `linux-postmarketos-qcom-msm8916`)
+- **Debian trixie** with postmarketOS v26.06 kernel (6.12.1, `linux-postmarketos-qcom-msm8916`)
 - **systemd** init (the Alpine branch uses OpenRC)
 - **USB Gadget Mode**: NCM (Linux/Mac) or RNDIS (Windows) networking, optional **ADB** (FunctionFS)
 - **Direct USB Networking**: Simple usb0 interface with DHCP (no bridge complexity)
@@ -61,8 +61,8 @@ USB_GADGET_ADB="no"          # "yes" adds ADB (ffs.adb + adbd) next to NCM/RNDIS
 
 # Optional mirror overrides
 RELEASE="trixie"
-PMOS_RELEASE="v25.06"
-KERNEL_VERSION="6.12.1-r2"
+PMOS_RELEASE="v26.06"
+KERNEL_VERSION="6.12.1-r5"
 # DEBIAN_MIRROR="http://deb.debian.org/debian"
 # PMOS_MIRROR="http://mirror.postmarketos.org/postmarketos"
 
