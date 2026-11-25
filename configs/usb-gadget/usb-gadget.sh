@@ -12,6 +12,40 @@ load_config() {
     # Set defaults if not configured
     : ${USE_NCM:=1}
     : ${ENABLE_OTG:=0}
+    : ${ENABLE_ADB:=0}
+}
+
+# ADB via FunctionFS: adbd (Debian package 'adbd') hardcodes the path
+# /dev/usb-ffs/adb/ (AOSP USB_FFS_ADB_PATH), so the configfs function
+# instance MUST be named 'adb'. adbd drops privileges to the shell user
+# (AID_SHELL 2000), hence the functionfs mount uid/gid.
+FFS_ADB_DIR="/dev/usb-ffs/adb"
+ADBD_PIDFILE="/run/adbd-usb.pid"
+
+start_adbd() {
+    if ! command -v adbd >/dev/null 2>&1; then
+        log "ENABLE_ADB=1 but adbd not installed — skipping ADB function"
+        return 1
+    fi
+    mkdir -p "${FFS_ADB_DIR}"
+    mountpoint -q "${FFS_ADB_DIR}" || \
+        mount -t functionfs adb "${FFS_ADB_DIR}" -o uid=2000,gid=2000 || \
+        mount -t functionfs adb "${FFS_ADB_DIR}" -o uid=0,gid=0 || return 1
+    log "Starting adbd (FunctionFS on ${FFS_ADB_DIR})"
+    adbd &
+    echo $! > "${ADBD_PIDFILE}"
+    # Give adbd a moment to write its descriptors to ep0 before the
+    # gadget is bound to the UDC, otherwise enumeration fails.
+    sleep 1
+    return 0
+}
+
+stop_adbd() {
+    if [ -f "${ADBD_PIDFILE}" ]; then
+        kill "$(cat "${ADBD_PIDFILE}")" 2>/dev/null || true
+        rm -f "${ADBD_PIDFILE}"
+    fi
+    mountpoint -q "${FFS_ADB_DIR}" && umount "${FFS_ADB_DIR}" || true
 }
 
 # Update a single configuration value
@@ -27,6 +61,7 @@ update_config() {
 
 USE_NCM=1           # 1 = NCM (Linux/Mac), 0 = RNDIS (Windows)
 ENABLE_OTG=0        # 1 = OTG Host mode, 0 = Gadget mode
+ENABLE_ADB=0        # 1 = ADB FunctionFS function (ffs.adb) alongside the network function
 EOF
     fi
     
@@ -137,6 +172,17 @@ setup_gadget() {
         ln -s configs/c.1 os_desc
     fi
     
+    # ADB function (FunctionFS) — must be created and adbd started
+    # BEFORE the gadget is bound to the UDC (single UDC on MSM8916,
+    # so ADB shares this composite gadget with the network function).
+    if [ "$ENABLE_ADB" = "1" ]; then
+        log "Adding ADB FunctionFS function (ffs.adb)"
+        modprobe usb_f_fs 2>/dev/null || true
+        mkdir -p functions/ffs.adb
+        ln -s functions/ffs.adb configs/c.1/
+        start_adbd || log "WARNING: adbd failed to start — continuing without ADB"
+    fi
+
     # Enable gadget
     UDC=$(ls /sys/class/udc/ | head -1)
     echo "$UDC" > UDC
@@ -147,17 +193,20 @@ setup_gadget() {
 
 teardown_gadget() {
     log "Tearing down USB gadget"
-    
+
+    stop_adbd
+
     [ ! -d "${GADGET_PATH}" ] && return 0
-    
+
     cd "${GADGET_PATH}"
-    
+
     # Disable gadget
     echo "" > UDC 2>/dev/null || true
-    
+
     # Remove config
     rm -f configs/c.1/ncm.usb0 2>/dev/null || true
     rm -f configs/c.1/rndis.usb0 2>/dev/null || true
+    rm -f configs/c.1/ffs.adb 2>/dev/null || true
     rm -f os_desc/c.1 2>/dev/null || true
     rmdir configs/c.1/strings/0x409 2>/dev/null || true
     rmdir configs/c.1 2>/dev/null || true
@@ -165,6 +214,7 @@ teardown_gadget() {
     # Remove functions
     rmdir functions/ncm.usb0 2>/dev/null || true
     rmdir functions/rndis.usb0 2>/dev/null || true
+    rmdir functions/ffs.adb 2>/dev/null || true
     
     # Remove strings and gadget
     rmdir strings/0x409 2>/dev/null || true
@@ -178,6 +228,7 @@ status() {
     echo "Configuration:"
     echo "  NCM Mode: $([ "$USE_NCM" = "1" ] && echo "Enabled (Linux/Mac)" || echo "Disabled (RNDIS/Windows)")"
     echo "  OTG Host: $([ "$ENABLE_OTG" = "1" ] && echo "Enabled" || echo "Disabled")"
+    echo "  ADB:      $([ "$ENABLE_ADB" = "1" ] && echo "Enabled (FunctionFS ffs.adb)" || echo "Disabled")"
     echo ""
     
     if [ "$ENABLE_OTG" = "1" ]; then
@@ -205,26 +256,39 @@ status() {
 enable_ncm() {
     update_config "USE_NCM" "1"
     echo "NCM mode enabled (Linux/Mac compatible)"
-    echo "Run 'rc-service usb-gadget restart' to apply changes"
+    echo "Run 'systemctl restart usb-gadget' (or '$0 restart') to apply changes"
 }
 
 disable_ncm() {
     update_config "USE_NCM" "0"
     echo "NCM mode disabled - RNDIS enabled (Windows compatible)"
-    echo "Run 'rc-service usb-gadget restart' to apply changes"
+    echo "Run 'systemctl restart usb-gadget' (or '$0 restart') to apply changes"
 }
 
 enable_otg() {
     update_config "ENABLE_OTG" "1"
     echo "OTG Host mode enabled"
-    echo "Run 'rc-service usb-gadget restart' to apply changes"
+    echo "Run 'systemctl restart usb-gadget' (or '$0 restart') to apply changes"
     echo "WARNING: This disables USB gadget functionality!"
 }
 
 disable_otg() {
     update_config "ENABLE_OTG" "0"
     echo "OTG Host mode disabled - Gadget mode enabled"
-    echo "Run 'rc-service usb-gadget restart' to apply changes"
+    echo "Run 'systemctl restart usb-gadget' (or '$0 restart') to apply changes"
+}
+
+enable_adb() {
+    update_config "ENABLE_ADB" "1"
+    echo "ADB enabled (FunctionFS ffs.adb, shares the gadget with the network function)"
+    echo "Requires the 'adbd' package in the image (build with USB_GADGET_ADB=yes)"
+    echo "Run 'systemctl restart usb-gadget' (or '$0 restart') to apply changes"
+}
+
+disable_adb() {
+    update_config "ENABLE_ADB" "0"
+    echo "ADB disabled"
+    echo "Run 'systemctl restart usb-gadget' (or '$0 restart') to apply changes"
 }
 
 show_config() {
@@ -264,11 +328,17 @@ case "$1" in
     disable_otg)
         disable_otg
         ;;
+    enable_adb)
+        enable_adb
+        ;;
+    disable_adb)
+        disable_adb
+        ;;
     show_config|config)
         show_config
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|enable_ncm|disable_ncm|enable_otg|disable_otg|show_config}"
+        echo "Usage: $0 {start|stop|restart|status|enable_ncm|disable_ncm|enable_otg|disable_otg|enable_adb|disable_adb|show_config}"
         exit 1
         ;;
 esac
