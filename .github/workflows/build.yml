@@ -29,7 +29,9 @@ jobs:
           sudo ./scripts/build-dtb.sh ./files
 
       - name: Build rootfs
-        run: sudo -E bash scripts/build-rootfs.sh ./files
+        # sudo -E is ignored on current runners; pass the workflow env
+        # explicitly through `env` so PASSWORD/WIFI/DTB reach the script
+        run: sudo env PASSWORD="$PASSWORD" WIFI_SSID="$WIFI_SSID" WIFI_PASS="$WIFI_PASS" DTB_FILE="$DTB_FILE" bash scripts/build-rootfs.sh ./files
 
       - name: Build images
         run: sudo bash ./scripts/build-images.sh ./files
