@@ -33,8 +33,11 @@ wget
 PACKAGES="$PACKAGES bc flex bison libelf-dev libssl-dev"
 
 if [ "$ARCH" = "amd64" ]; then
-    # Cross-compilers and QEMU for amd64 host targeting armv7
-    PACKAGES="$PACKAGES g++-arm-linux-gnueabihf gcc-arm-linux-gnueabihf"
+    # Cross-compilers and QEMU for amd64 host targeting armv7.
+    # The aarch64 toolchain stays: build-firmware.sh compiles qhypstub
+    # and lk2nd (the bootloader stack) as AArch64 regardless of the
+    # userland architecture.
+    PACKAGES="$PACKAGES g++-arm-linux-gnueabihf gcc-arm-linux-gnueabihf g++-aarch64-linux-gnu gcc-aarch64-linux-gnu"
 else
     # Native compilers on arm64 — no cross-compile needed
     PACKAGES="$PACKAGES gcc g++"
