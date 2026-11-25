@@ -23,8 +23,8 @@ STAGING="$(mktemp -d)"
 CHROOT="$STAGING/rootfs"
 
 HOST_NAME="${HOST_NAME:-uz801a}"
-RELEASE="${RELEASE:-v3.21}"
-PMOS_RELEASE="${PMOS_RELEASE:-v25.06}"
+RELEASE="${RELEASE:-v3.24}"
+PMOS_RELEASE="${PMOS_RELEASE:-v26.06}"
 MIRROR="${MIRROR:-http://dl-cdn.alpinelinux.org/alpine}"
 PMOS_MIRROR="${PMOS_MIRROR:-http://mirror.postmarketos.org/postmarketos}"
 
@@ -92,7 +92,7 @@ if [ "$IS_ARM64" = "true" ]; then
 else
     APK_STATIC_ARCH="x86_64"
 fi
-wget -q "https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.6/${APK_STATIC_ARCH}/apk.static" -O "$STAGING/apk.static"
+wget -q "https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v3.0.9/${APK_STATIC_ARCH}/apk.static" -O "$STAGING/apk.static"
 chmod a+x "$STAGING/apk.static"
 
 # Bootstrap Alpine
