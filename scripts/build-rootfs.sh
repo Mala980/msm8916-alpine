@@ -74,7 +74,7 @@ IS_ARM64=false
 [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ] && IS_ARM64=true
 
 if [ "$IS_ARM64" = "false" ]; then
-    command -v qemu-aarch64-static >/dev/null || { echo "Falta qemu-aarch64-static"; exit 1; }
+    command -v qemu-arm-static >/dev/null || { echo "Falta qemu-arm-static"; exit 1; }
 fi
 command -v debootstrap >/dev/null || { echo "ERROR: debootstrap not found (run scripts/build-deps.sh)"; exit 1; }
 
@@ -85,14 +85,14 @@ echo "[*] Debian release: $RELEASE (kernel: postmarketOS $KERNEL_VERSION from $P
 
 # --- Bootstrap Debian (foreign + second stage, like OpenStick-Builder) ---
 mkdir -p "$CHROOT"
-echo "[*] Bootstrapping Debian ($RELEASE, arm64)..."
-debootstrap --foreign --arch arm64 \
+echo "[*] Bootstrapping Debian ($RELEASE, armhf)..."
+debootstrap --foreign --arch armhf \
     --keyring /usr/share/keyrings/debian-archive-keyring.gpg \
     "$RELEASE" "$CHROOT" "$DEBIAN_MIRROR"
 
 if [ "$IS_ARM64" = "false" ]; then
     mkdir -p "$CHROOT/usr/bin"
-    cp "$(which qemu-aarch64-static)" "$CHROOT/usr/bin/"
+    cp "$(which qemu-arm-static)" "$CHROOT/usr/bin/"
 fi
 
 cat << EOF > "$CHROOT/etc/apt/sources.list"
@@ -168,9 +168,9 @@ echo "[*] Installing postmarketOS kernel $KERNEL_VERSION..."
 # --keep-directory-symlink: the .apk carries a top-level lib/ directory;
 # extracting it over trixie's usrmerge /lib -> usr/lib symlink would
 # replace the symlink with a real directory holding only lib/modules,
-# breaking the dynamic loader (/lib/ld-linux-aarch64.so.1) for every
+# breaking the dynamic loader (/lib/ld-linux-armhf.so.3) for every
 # subsequent chroot call.
-wget -q -O - "${PMOS_MIRROR}/${PMOS_RELEASE}/aarch64/linux-postmarketos-qcom-msm8916-${KERNEL_VERSION}.apk" \
+wget -q -O - "${PMOS_MIRROR}/${PMOS_RELEASE}/armv7/linux-postmarketos-qcom-msm8916-${KERNEL_VERSION}.apk" \
     | tar xzf - -C "$CHROOT" --keep-directory-symlink --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null || {
         echo "ERROR: failed to download/extract kernel apk (check KERNEL_VERSION=$KERNEL_VERSION against $PMOS_RELEASE)"
         exit 1
@@ -238,7 +238,7 @@ if [ "$DOCKER_ENABLE" = "yes" ]; then
 DOCKEREOF
 fi
 
-# ADB daemon (profile/config-driven; Debian trixie ships a native arm64
+# ADB daemon (profile/config-driven; Debian trixie ships a native armhf
 # 'adbd' package — the daemon HandsomeMod builds from AOSP sources.
 # See docs/adb.md. The gadget side lives in usb-gadget.sh: ffs.adb.)
 if [ "$USB_GADGET_ADB" = "yes" ]; then
@@ -411,7 +411,7 @@ done
 echo "[*] Creating tarball..."
 tar cpzf "$STAGING/debian_rootfs.tgz" \
     --exclude="root/*" \
-    --exclude="usr/bin/qemu-aarch64-static" \
+    --exclude="usr/bin/qemu-arm-static" \
     -C "$CHROOT" .
 
 # Copy to output directory (same output names as the Alpine branch)
@@ -420,7 +420,7 @@ rm -rf "$OUT_DIR/rootfs"
 mkdir -p "$OUT_DIR/rootfs"
 tar -C "$CHROOT" \
     --exclude="root/*" \
-    --exclude="usr/bin/qemu-aarch64-static" \
+    --exclude="usr/bin/qemu-arm-static" \
     -cf - . | tar -C "$OUT_DIR/rootfs" -xf -
 
 cp "$STAGING/debian_rootfs.tgz" "$OUT_DIR/rootfs.tgz"
