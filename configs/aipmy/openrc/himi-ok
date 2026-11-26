@@ -1,0 +1,6 @@
+#!/sbin/openrc-run
+# himi-ok - HiMI_OK NV guard (modem NV item 2500 keeper)
+description="HiMI_OK NV guard (modem NV item 2500 keeper)"
+command="/usr/sbin/himi-ok-guard"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"

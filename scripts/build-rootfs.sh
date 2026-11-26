@@ -39,6 +39,10 @@ OCTOPRINT_PREINSTALL="${OCTOPRINT_PREINSTALL:-no}"
 ZORAXY_PREINSTALL="${ZORAXY_PREINSTALL:-no}"
 DOCKER_ENABLE="${DOCKER_ENABLE:-no}"
 STACKS="${STACKS:-}"
+# Kernel source switch (see configs/kernel/README.md, docs/kernel-6.18.md):
+#   custom (default) = build Linux 6.18.65 from kernel.org (scripts/build-kernel.sh)
+#   pmos             = install linux-postmarketos-qcom-msm8916 from the pmOS repo
+KERNEL_SOURCE="${KERNEL_SOURCE:-custom}"
 # Profile-controlled additions (set in profiles/*.env, not here)
 PROFILE_PACKAGES="${PROFILE_PACKAGES:-}"
 PROFILE_SERVICES="${PROFILE_SERVICES:-}"
@@ -100,6 +104,14 @@ chmod a+x "$STAGING/apk.static"
 echo "[*] Bootstrapping Alpine Linux..."
 "$STAGING/apk.static" add -p "$CHROOT" --initdb -U --arch aarch64 --allow-untrusted alpine-base
 
+# pmOS kernel package is only installed when falling back to it; the
+# default (custom) kernel is built by scripts/build-kernel.sh below.
+if [ "$KERNEL_SOURCE" = "pmos" ]; then
+    KERNEL_PKG="linux-postmarketos-qcom-msm8916"
+else
+    KERNEL_PKG=""
+fi
+
 echo "[*] Installing packages..."
 chroot "$CHROOT" ash -l -c "
 apk add --no-cache --no-interactive --allow-untrusted postmarketos-keys
@@ -108,7 +120,7 @@ apk add --no-cache --no-interactive \
     eudev udev-init-scripts udev-init-scripts-openrc \
     shadow sudo \
     e2fsprogs e2fsprogs-extra \
-    linux-postmarketos-qcom-msm8916 \
+    ${KERNEL_PKG:-} \
     msm-firmware-loader \
     rmtfs \
     modemmanager \
@@ -135,6 +147,18 @@ if [ -n "${PACKAGES:-}" ]; then
     _PKG_LIST="$(echo "$PACKAGES" | tr '\n' ' ' | tr -s ' ')"
     echo "[*] Installing user packages..."
     chroot "$CHROOT" ash -l -c "apk add --no-cache --no-interactive ${_PKG_LIST}"
+fi
+
+# Custom kernel (6.18) — replaces the pmOS .apk kernel extraction.
+# Runs before the DTB copy below so its DTBs land in $OUT_DIR/dtbs/ and
+# are picked up into /boot/dtbs/qcom/ by the existing copy step.
+if [ "$KERNEL_SOURCE" = "custom" ]; then
+    echo "[*] Building custom kernel 6.18 (this takes a while)..."
+    KERNEL_BUILD_DIR="$STAGING/kernel-build" CHROOT="$CHROOT" OUT_DIR="$OUT_DIR" \
+        bash scripts/build-kernel.sh
+elif [ "$KERNEL_SOURCE" != "pmos" ]; then
+    echo "ERROR: unknown KERNEL_SOURCE=$KERNEL_SOURCE (custom|pmos)" >&2
+    exit 1
 fi
 
 # Setup Alpine
@@ -242,8 +266,47 @@ mkdir -p "$CHROOT/etc/NetworkManager/system-connections"
 cp configs/network-manager/*.nmconnection "$CHROOT/etc/NetworkManager/system-connections/" 2>/dev/null || true
 chmod 0600 "$CHROOT/etc/NetworkManager/system-connections/"* 2>/dev/null || true
 
-# Substitute WiFi placeholders if WiFi is enabled and credentials are provided
-if [ "${WIFI_ENABLED:-yes}" = "yes" ] && [ -n "${WIFI_SSID:-}" ]; then
+# WiFi mode: "ap" (default) makes the dongle broadcast its own access point
+# on first boot: WPA2-PSK SSID "OpenStick" (password 12345678), 802.11bg
+# channel 1, 192.168.43.1/24 with NetworkManager shared-mode DHCP
+# (dnsmasq). "client" restores the previous behavior: join WIFI_SSID as a
+# station. Note: the wcn36xx firmware cannot run STA + AP at the same time.
+# See docs/wifi-ap.md.
+WIFI_MODE="${WIFI_MODE:-ap}"
+if [ "${WIFI_ENABLED:-yes}" = "yes" ] && [ "${WIFI_MODE}" = "ap" ]; then
+    echo "[*] Configuring WiFi as access point (SSID: OpenStick, channel 1, 192.168.43.1/24)"
+    WLAN_CONN="$CHROOT/etc/NetworkManager/system-connections/wlan.nmconnection"
+    cat > "$WLAN_CONN" <<'EOF'
+[connection]
+id=OpenStick
+uuid=7d3f2c10-4b5a-4e8d-9c1a-2b3c4d5e6f70
+type=wifi
+autoconnect=true
+interface-name=wlan0
+
+[wifi]
+mode=ap
+ssid=OpenStick
+band=bg
+channel=1
+powersave=2
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=12345678
+
+[ipv4]
+method=shared
+address1=192.168.43.1/24
+
+[ipv6]
+method=disabled
+
+[proxy]
+EOF
+    chmod 0600 "$WLAN_CONN"
+elif [ "${WIFI_ENABLED:-yes}" = "yes" ] && [ -n "${WIFI_SSID:-}" ]; then
+    # Substitute WiFi placeholders if WiFi is enabled and credentials are provided
     echo "[*] Configuring WiFi connection (SSID: ${WIFI_SSID})"
     WLAN_CONN="$CHROOT/etc/NetworkManager/system-connections/wlan.nmconnection"
     sed -i "s/__SSID__/${WIFI_SSID}/g" "$WLAN_CONN"
@@ -355,6 +418,8 @@ fi
 echo "[*] Building aipmy userspace tools..."
 mkdir -p "$CHROOT/tmp/aipmy"
 cp -a configs/aipmy/. "$CHROOT/tmp/aipmy/"
+cp configs/failsafe/button-watch.c "$CHROOT/tmp/aipmy/src/button-watch.c"
+install -Dm0644 configs/failsafe/failsafe-reset.list "$CHROOT/etc/failsafe-reset.list"
 chroot "$CHROOT" ash -l -c "
     apk add --no-cache qrtr-libs
     apk add --no-cache --virtual .aipmy-build gcc musl-dev make qrtr-dev linux-headers
@@ -362,10 +427,12 @@ chroot "$CHROOT" ash -l -c "
     apk del .aipmy-build
 "
 rm -rf "$CHROOT/tmp/aipmy"
-for svc in diag-bind qcom-time-daemon bt-spp bt-ssp-guard; do
+for svc in diag-bind qcom-time-daemon bt-spp bt-ssp-guard carrier-autocfg modem-led-monitor wifi-led-monitor sim-hotplug modem-bearer-watchdog himi-ok modem-bandlock failsafe-button; do
     install -Dm0755 "configs/aipmy/openrc/$svc" "$CHROOT/etc/init.d/$svc"
 done
-chroot "$CHROOT" ash -l -c "rc-update add diag-bind default; rc-update add bt-ssp-guard default" || true
+chroot "$CHROOT" ash -l -c "rc-update add diag-bind default; rc-update add bt-ssp-guard default; rc-update add carrier-autocfg default; rc-update add modem-led-monitor default; rc-update add wifi-led-monitor default; rc-update add sim-hotplug default; rc-update add modem-bandlock default; rc-update add failsafe-button boot" || true
+# bluetoothd --compat conf.d (for bt-spp; inert without bluez)
+install -Dm0644 configs/bluetooth/openrc/bluetooth.confd "$CHROOT/etc/conf.d/bluetooth"
 echo "[+] aipmy tools installed"
 
 # USB gadget
@@ -431,7 +498,7 @@ tar -C "$CHROOT" \
 cp "$STAGING/alpine_rootfs.tgz" "$OUT_DIR/rootfs.tgz"
 
 echo "[+] OK: Alpine rootfs ready in $OUT_DIR (profile: ${PROFILE:-default})"
-echo "    - Kernel: linux-postmarketos-qcom-msm8916 from ${PMOS_RELEASE}"
+echo "    - Kernel: ${KERNEL_SOURCE} (custom = Linux 6.18.65, pmos = linux-postmarketos-qcom-msm8916 ${PMOS_RELEASE})"
 echo "    - Docker: ${DOCKER_ENABLE}"
 echo "    - Stacks: ${STACKS:-none}"
 echo "    - Chrony: enabled with NTP servers"

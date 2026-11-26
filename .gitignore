@@ -3,6 +3,10 @@
 *.bin
 *.zip
 *.mbn
+
+# Exception: vendored carrier MCFG payloads (user-approved,
+# see configs/aipmy/NOTICE) — these .mbn files ARE tracked.
+!configs/aipmy/share/mcfg/**
 *.tgz
 build
 dist
@@ -33,3 +37,11 @@ plugins/*/dist/
 
 __pycache__/
 *.py[cod]
+
+# Custom kernel build cache (scripts/build-kernel.sh default)
+.kernel-build/
+
+# Reports and state files from scheduled checks — never commit
+check-*.md
+.*-check-state.json
+.kernel618-research.md

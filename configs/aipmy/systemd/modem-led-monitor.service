@@ -1,0 +1,11 @@
+[Unit]
+Description=Modem health LED monitor
+After=ModemManager.service
+
+[Service]
+ExecStart=/usr/sbin/modem-led-monitor
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=SIM carrier auto-provisioning (APN/IP-type into NetworkManager)
+After=ModemManager.service NetworkManager.service
+Wants=ModemManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/carrier-autocfg run-once
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+#!/sbin/openrc-run
+# modem-led-monitor - Modem health LED monitor
+description="Modem health LED monitor"
+command="/usr/sbin/modem-led-monitor"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"

@@ -1,0 +1,74 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# modem-led-monitor - drive a status LED from modem subsystem health,
+# adapted from aipmy/msm8916-openwrt's base-files modem-led-monitor
+# (LED semantics kept; netifd/ubus parts dropped - this stack uses
+# NetworkManager/ModemManager).
+#
+#   LED off   = modem healthy: MSS remoteproc running, wwan QMI port
+#               present, ModemManager sees the modem and a SIM.
+#   LED blink = modem starting or unhealthy.
+#
+# Config: /etc/modem-care.conf (MODEM_LED_ENABLED, MODEM_LED,
+# LED_CHECK_INTERVAL).  Gate/managed by `modem-care`.
+
+CONF=/etc/modem-care.conf
+MODEM_LED_ENABLED=yes; MODEM_LED=auto; LED_CHECK_INTERVAL=2
+[ -f "$CONF" ] && . "$CONF"
+[ "$MODEM_LED_ENABLED" = "yes" ] || { logger -t modem-led-monitor "disabled by $CONF"; exit 0; }
+
+TAG=modem-led-monitor
+MSS_NAME="4080000.remoteproc"
+
+resolve_led() {
+	if [ "$MODEM_LED" != "auto" ] && [ -d "/sys/class/leds/$MODEM_LED" ]; then
+		echo "/sys/class/leds/$MODEM_LED"; return 0
+	fi
+	for l in /sys/class/leds/*red*; do [ -d "$l" ] && { echo "$l"; return 0; }; done
+	for l in /sys/class/leds/*; do [ -d "$l" ] && { echo "$l"; return 0; }; done
+	return 1
+}
+
+LED=$(resolve_led) || { logger -t $TAG "no LED found; exiting"; exit 0; }
+
+set_led() { # 0=off 1=blink
+	[ -w "$LED/trigger" ] || return 0
+	case "$1" in
+		0) echo none > "$LED/trigger" 2>/dev/null; echo 0 > "$LED/brightness" 2>/dev/null ;;
+		1) echo timer > "$LED/trigger" 2>/dev/null
+		   echo 500 > "$LED/delay_on" 2>/dev/null; echo 500 > "$LED/delay_off" 2>/dev/null ;;
+	esac
+}
+
+healthy() {
+	local r name
+	for r in /sys/class/remoteproc/remoteproc*; do
+		[ -r "$r/name" ] || continue
+		name=$(cat "$r/name" 2>/dev/null)
+		if [ "$name" = "$MSS_NAME" ]; then
+			[ "$(cat "$r/state" 2>/dev/null)" = "running" ] || return 1
+			break
+		fi
+	done
+	[ -e /sys/class/wwan/wwan0 ] || return 1
+	[ -e /sys/class/wwan/wwan0qmi0 ] || return 1
+	# ModemManager sees the modem and a SIM is attached.
+	mmcli -L 2>/dev/null | grep -q '/Modem/' || return 1
+	local sim
+	sim=$(mmcli -m any --output-keyvalue 2>/dev/null | awk -F': ' '/modem.generic.sim / {print $2}' | tr -d ' \r')
+	[ -n "$sim" ] && [ "$sim" != "--" ] && [ "$sim" != "/" ] || return 1
+	return 0
+}
+
+set_led 1
+LAST=""
+while true; do
+	if healthy; then STATE=healthy; V=0; else STATE=unhealthy; V=1; fi
+	if [ "$STATE" != "$LAST" ]; then
+		set_led "$V"
+		logger -t $TAG "modem health: $STATE (LED $LED)"
+		LAST="$STATE"
+	fi
+	sleep "$LED_CHECK_INTERVAL"
+done

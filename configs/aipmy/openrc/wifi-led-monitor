@@ -1,0 +1,6 @@
+#!/sbin/openrc-run
+# wifi-led-monitor - Wi-Fi AP state LED monitor
+description="Wi-Fi AP state LED monitor"
+command="/usr/sbin/wifi-led-monitor"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"

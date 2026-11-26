@@ -1,0 +1,11 @@
+[Unit]
+Description=LTE bearer stall watchdog (opt-in, see /etc/modem-care.conf)
+After=ModemManager.service NetworkManager.service
+
+[Service]
+ExecStart=/usr/sbin/modem-bearer-watchdog
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

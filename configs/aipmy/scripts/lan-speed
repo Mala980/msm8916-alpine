@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# lan-speed - local link throughput readout (CLI).
+#
+# Upstream (aipmy/msm8916-openwrt) ships "lan-speed" as a LuCI CGI
+# endpoint used by a web speedtest page.  This project has no web
+# UI, so the port is a shell tool instead: it samples the kernel
+# counters of a LAN interface twice and reports the achieved
+# throughput - the same quantity the web page visualised.
+#
+#   lan-speed [iface] [seconds]
+#
+# Default iface: usb0 if present, else wlan0.  Default sample: 5 s.
+# Run it while traffic flows (e.g. during a file transfer) - it
+# measures, it does not generate traffic.
+
+IFACE="${1:-}"
+SECS="${2:-5}"
+[ -n "$IFACE" ] || { [ -d /sys/class/net/usb0 ] && IFACE=usb0 || IFACE=wlan0; }
+[ -d "/sys/class/net/$IFACE" ] || { echo "lan-speed: no such interface: $IFACE" >&2; exit 1; }
+case "$SECS" in ''|*[!0-9]*) echo "lan-speed: seconds must be a number" >&2; exit 2 ;; esac
+
+r1=$(cat "/sys/class/net/$IFACE/statistics/rx_bytes"); t1=$(cat "/sys/class/net/$IFACE/statistics/tx_bytes")
+sleep "$SECS"
+r2=$(cat "/sys/class/net/$IFACE/statistics/rx_bytes"); t2=$(cat "/sys/class/net/$IFACE/statistics/tx_bytes")
+
+awk -v r=$((r2 - r1)) -v t=$((t2 - t1)) -v s="$SECS" -v i="$IFACE" 'BEGIN {
+	printf "%s over %ss:  down %.2f Mbit/s   up %.2f Mbit/s\n", i, s, r*8/s/1000000, t*8/s/1000000
+}'

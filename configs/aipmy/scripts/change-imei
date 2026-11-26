@@ -1,0 +1,127 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# change-imei - show or change the modem IMEI (MSM8916), adapted from
+# aipmy/msm8916-openwrt's base-files usr/bin/change-imei to this
+# builder's stack.
+#
+# Exactly what it does:
+#   * The IMEI lives in modem NV item 550 (NV_UE_IMEI_I), stored as
+#     nibble-swapped BCD: byte "08", the first digit, nibble 'a', then
+#     digit pairs swapped.  This tool encodes/decodes that format.
+#   * Read/write goes through diag_nv (DIAG NV_READ_F 0x26 /
+#     NV_WRITE_F 0x27 over the SMD DIAG channel /dev/rpmsg0 - the
+#     diag-bind service must be running).
+#   * After a verified write it cycles the modem radio so the new
+#     IMEI is picked up: qmicli DMS operating-mode low-power -> online
+#     against /dev/wwan0qmi0 when qmicli is available, otherwise a
+#     ModemManager disable/enable cycle; then it restarts the
+#     ModemManager service.
+#
+# Usage:
+#   change-imei                 show the current IMEI (NV + active)
+#   change-imei <15-digit IMEI> write a new IMEI
+#
+# NOTE: changing an IMEI may be illegal in your jurisdiction and can
+# get the device barred by carriers.  You are responsible for the
+# number you write.
+
+set -e
+
+DIAG_NV="/usr/sbin/diag_nv"
+QMICLI="$(command -v qmicli || true)"
+QMI_DEV="/dev/wwan0qmi0"
+
+decode_imei() {
+	echo "$1" | awk '{
+		hex = $0; gsub(/[^0-9a-fA-F]/, "", hex);
+		if (length(hex) < 18) { print "Invalid/Empty"; exit }
+		d1  = substr(hex, 3, 1);
+		d2  = substr(hex, 6, 1);  d3  = substr(hex, 5, 1);
+		d4  = substr(hex, 8, 1);  d5  = substr(hex, 7, 1);
+		d6  = substr(hex, 10, 1); d7  = substr(hex, 9, 1);
+		d8  = substr(hex, 12, 1); d9  = substr(hex, 11, 1);
+		d10 = substr(hex, 14, 1); d11 = substr(hex, 13, 1);
+		d12 = substr(hex, 16, 1); d13 = substr(hex, 15, 1);
+		d14 = substr(hex, 18, 1); d15 = substr(hex, 17, 1);
+		print d1 d2 d3 d4 d5 d6 d7 d8 d9 d10 d11 d12 d13 d14 d15;
+	}'
+}
+
+encode_imei() {
+	echo "$1" | awk '{
+		split($1, d, "");
+		print "08" d[1] "a" d[3] d[2] d[5] d[4] d[7] d[6] d[9] d[8] d[11] d[10] d[13] d[12] d[15] d[14];
+	}'
+}
+
+nv_imei() {
+	# First dump line of diag_nv read 550 carries the 9 IMEI bytes.
+	"$DIAG_NV" read 550 2>/dev/null | sed -n '1p' | awk '{print $2 $3 $4 $5 $6 $7 $8 $9 $10}'
+}
+
+active_imei() {
+	if [ -n "$QMICLI" ] && [ -e "$QMI_DEV" ]; then
+		$QMICLI -p -d "$QMI_DEV" --dms-get-ids 2>/dev/null | sed -n "s/.*IMEI: '\([0-9]*\)'.*/\1/p" | head -n1
+	else
+		mmcli -m any -K 2>/dev/null | sed -n 's/^modem\.3gpp\.imei *: *//p' | head -n1
+	fi
+}
+
+restart_mm() {
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl restart ModemManager 2>/dev/null || true
+	elif command -v rc-service >/dev/null 2>&1; then
+		rc-service modemmanager restart 2>/dev/null || true
+	fi
+}
+
+if [ -z "${1:-}" ]; then
+	echo "============================================="
+	echo "   Qualcomm Snapdragon 410 (MSM8916) IMEI   "
+	echo "============================================="
+	current=$(decode_imei "$(nv_imei || true)" || true)
+	echo "NVRAM IMEI  : ${current:-unknown}"
+	act=$(active_imei || true)
+	[ -n "$act" ] && echo "Active Modem: $act"
+	echo ""
+	echo "Usage: change-imei <new-15-digit-IMEI>"
+	exit 0
+fi
+
+NEW_IMEI="$1"
+case "$NEW_IMEI" in
+	*[!0-9]*|"") echo "[-] Error: IMEI must be exactly 15 digits (got: '$NEW_IMEI')" >&2; exit 1 ;;
+esac
+[ "${#NEW_IMEI}" -eq 15 ] || { echo "[-] Error: IMEI must be exactly 15 digits (got: '$NEW_IMEI')" >&2; exit 1; }
+
+HEX=$(encode_imei "$NEW_IMEI")
+echo "[*] [1/4] Writing new IMEI to modem NVRAM (NV 550): $NEW_IMEI (hex: $HEX)..."
+"$DIAG_NV" write 550 "$HEX" >/dev/null
+
+verified=$(decode_imei "$(nv_imei || true)" || true)
+if [ "$verified" != "$NEW_IMEI" ]; then
+	echo "[-] ERROR: NVRAM read-back verification failed (read: '$verified', expected: '$NEW_IMEI')" >&2
+	exit 1
+fi
+echo "[+] [2/4] NVRAM read-back verified!"
+
+echo "[*] [3/4] Cycling the radio so the modem picks up the new IMEI..."
+if [ -n "$QMICLI" ] && [ -e "$QMI_DEV" ]; then
+	$QMICLI -p -d "$QMI_DEV" --dms-set-operating-mode=low-power >/dev/null 2>&1 || true
+	sleep 1
+	$QMICLI -p -d "$QMI_DEV" --dms-set-operating-mode=online >/dev/null 2>&1 || true
+else
+	mmcli -m any -d >/dev/null 2>&1 || true
+	sleep 1
+	mmcli -m any -e >/dev/null 2>&1 || true
+fi
+
+echo "[*] [4/4] Restarting ModemManager..."
+restart_mm
+sleep 3
+
+echo "============================================="
+echo "[+] DONE. IMEI changed."
+echo "    Active IMEI in modem: $(active_imei || echo unknown)"
+echo "============================================="

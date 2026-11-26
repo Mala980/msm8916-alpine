@@ -13,6 +13,22 @@ Licenses (per upstream package metadata):
 
 Not ported: reboot-edl's unbuilt alternate sources (reboot-edl.c,
 reboot-dload.c, reboot-mode.c — upstream only builds
-reboot-mode-raw plus the reboot-mode script), the LuCI apps, and
-qcom-carrier-autocfg (UCI/procd-coupled; its MBN blobs may follow
-separately).
+reboot-mode-raw plus the reboot-mode script), and the LuCI apps.
+
+Round 2 (2026-11-26) adds clean-room adaptations of further aipmy
+features, reimplemented for this builder's NetworkManager /
+systemd / OpenRC stack (no UCI, no procd, no web UI), in
+scripts/ + src/diag_nv.c + configs/failsafe/button-watch.c:
+qcom-carrier-autocfg (as carrier-autocfg; upstream's MCFG
+activation stays disabled, as upstream itself disabled it; the
+per-carrier MBN payloads under share/mcfg/ ARE vendored verbatim
+from the same aipmy commit with the user's explicit approval on
+2026-11-26 — they are Qualcomm proprietary modem configuration
+binaries, redistributed as-is), change-imei, the modem-care
+services (modem-bearer-watchdog, sim-hotplug, modem-led-monitor,
+wifi-led-monitor, lan-speed), modem-bandlock, himi-ok-guard, and
+a failsafe button monitor.  diag_nv is an original implementation
+of the documented DIAG NV_READ_F/NV_WRITE_F commands providing
+the interface of upstream's prebuilt diag_nv.bin (whose source is
+not published).  Licenses: GPL-2.0-only for the round-2 items
+(upstream base-files and qcom-carrier-autocfg are GPL-2.0-only).
