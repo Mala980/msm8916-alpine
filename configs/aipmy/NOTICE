@@ -20,8 +20,11 @@ features, reimplemented for this builder's NetworkManager /
 systemd / OpenRC stack (no UCI, no procd, no web UI), in
 scripts/ + src/diag_nv.c + configs/failsafe/button-watch.c:
 qcom-carrier-autocfg (as carrier-autocfg; upstream's MCFG
-activation stays disabled, as upstream itself disabled it, and
-the MBN blobs are NOT vendored), change-imei, the modem-care
+activation stays disabled, as upstream itself disabled it; the
+per-carrier MBN payloads under share/mcfg/ ARE vendored verbatim
+from the same aipmy commit with the user's explicit approval on
+2026-11-26 — they are Qualcomm proprietary modem configuration
+binaries, redistributed as-is), change-imei, the modem-care
 services (modem-bearer-watchdog, sim-hotplug, modem-led-monitor,
 wifi-led-monitor, lan-speed), modem-bandlock, himi-ok-guard, and
 a failsafe button monitor.  diag_nv is an original implementation
