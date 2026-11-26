@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install dependencies
         run: sudo sh -e scripts/build-deps.sh
@@ -46,7 +46,7 @@ jobs:
         run: sudo bash ./scripts/build-gpt.sh files/gpt_both0.bin
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: msm8916-alpine-armv7
           path: |
