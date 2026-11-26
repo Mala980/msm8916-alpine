@@ -346,6 +346,28 @@ if [ "$USB_GADGET_ADB" = "yes" ]; then
     echo "[+] adbd installed to /usr/bin/adbd"
 fi
 
+# aipmy userspace tools — a curated set of MSM8916 utilities ported
+# from aipmy/msm8916-openwrt (vendored in configs/aipmy, see
+# docs/aipmy-packages.md): qcom-time-daemon, ats-probe, diag_efs,
+# diag_logtool, diag-bind, reboot-mode (EDL), bt-spp, bt-ssp-guard.
+# Compiled inside the chroot like adbd; libqrtr is the only
+# non-libc dependency (qrtr-libs stays as a runtime library).
+echo "[*] Building aipmy userspace tools..."
+mkdir -p "$CHROOT/tmp/aipmy"
+cp -a configs/aipmy/. "$CHROOT/tmp/aipmy/"
+chroot "$CHROOT" ash -l -c "
+    apk add --no-cache qrtr-libs
+    apk add --no-cache --virtual .aipmy-build gcc musl-dev make qrtr-dev linux-headers
+    cd /tmp/aipmy && make -f aipmy.mk -j\$(nproc) && make -f aipmy.mk install
+    apk del .aipmy-build
+"
+rm -rf "$CHROOT/tmp/aipmy"
+for svc in diag-bind qcom-time-daemon bt-spp bt-ssp-guard; do
+    install -Dm0755 "configs/aipmy/openrc/$svc" "$CHROOT/etc/init.d/$svc"
+done
+chroot "$CHROOT" ash -l -c "rc-update add diag-bind default; rc-update add bt-ssp-guard default" || true
+echo "[+] aipmy tools installed"
+
 # USB gadget
 if [ "$USB_GADGET_INSTALL" = "yes" ]; then
     install -Dm0755 configs/usb-gadget/usb-gadget.sh "$CHROOT/usr/sbin/usb-gadget"
