@@ -70,10 +70,10 @@ the CPU cluster sensor (Wi-Fi) and give pm8916-thermal a cooling device (CPU).
 +    cooling-maps {
 +        pmic_map {
 +            trip = <&pmic_alert>;
-+            cooling-device = <&CPU0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
-+                     <&CPU1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
-+                     <&CPU2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
-+                     <&CPU3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++            cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++                     <&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++                     <&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++                     <&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 +        };
 +    };
 +};

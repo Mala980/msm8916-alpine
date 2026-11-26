@@ -111,8 +111,16 @@ echo "[+] Config verified: $(grep -c '^CONFIG_' "$KSRC/.config") symbols; releas
 # build dir on the big disk instead.
 export TMPDIR="$KERNEL_BUILD_DIR/tmp"
 mkdir -p "$TMPDIR"
-echo "[*] Building kernel ($KERNEL_IMAGE + modules + dtbs, -j$JOBS) ..."
-(cd "$KSRC" && make -j"$JOBS" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" "$KERNEL_IMAGE" modules dtbs)
+# Build only the DTBs this project ships (DTB_NAMES) instead of the
+# generic `dtbs` target: `dtbs` compiles every board the defconfig
+# enables (all vendors), which is slow, and a broken DTS for a board we
+# do not ship would fail the whole kernel build.
+DTB_TARGETS=()
+for dtb in "${DTB_NAMES[@]}"; do
+    DTB_TARGETS+=("qcom/${dtb}.dtb")
+done
+echo "[*] Building kernel ($KERNEL_IMAGE + modules + ${#DTB_TARGETS[@]} DTBs, -j$JOBS) ..."
+(cd "$KSRC" && make -j"$JOBS" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" "$KERNEL_IMAGE" modules "${DTB_TARGETS[@]}")
 
 # --- 6. install -------------------------------------------------------------
 if [ -n "$CHROOT" ]; then
