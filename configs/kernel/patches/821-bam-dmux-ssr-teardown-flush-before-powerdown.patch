@@ -1,0 +1,32 @@
+--- a/drivers/net/wwan/qcom_bam_dmux.c
++++ b/drivers/net/wwan/qcom_bam_dmux.c
+@@ -2415,6 +2415,29 @@
+ 		/* Every SSR gets a fresh powerup budget. */
+ 		dmux->ssr_powerup_retries = 0;
+ 		schedule_work(&dmux->ssr_teardown_work);
++
++		/*
++		 * patch 821: run the teardown to COMPLETION here, before
++		 * rproc_stop() continues.
++		 *
++		 * rproc_stop() calls rproc_stop_subdevices() (which fires this
++		 * notifier) and then, tens of ms later, rproc->ops->stop() ->
++		 * q6v5_stop(), which powers the modem down (q6v5-trace 01..09:
++		 * disable_qchannel, reset_assert, clk_disable,
++		 * regulator_disable).  bam_dmux_power_off() terminates and
++		 * RELEASES the BAM-DMUX DMA channels, and the BAM sits in the
++		 * modem's power domain.  Left asynchronous -- as it was before
++		 * this patch -- the work races that power-down.  Measured
++		 * 2026-09-21: when the work reaches state_lock after the
++		 * power-down the AP stops printing and silently resets, with no
++		 * coredump (rproc_stop() never returns).  The identical freeze
++		 * is reproducible on demand with
++		 *   echo stop > /sys/class/remoteproc/remoteproc0/state
++		 *
++		 * Flushing makes the ordering deterministic: the DMA channels are
++		 * released while the BAM is still powered.
++		 */
++		flush_work(&dmux->ssr_teardown_work);
+ 		break;
+ 	case QCOM_SSR_AFTER_POWERUP:
+ 		dev_info(dmux->dev, "bam_dmux: SSR after powerup: scheduling powerup work\n");

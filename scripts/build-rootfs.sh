@@ -3,9 +3,12 @@
 # Ported from the Alpine build-rootfs.sh (branch main) keeping the same
 # profile contract, outputs (rootfs.tgz + rootfs/ dir) and config layout.
 # Debian userland via debootstrap (reference: kinsamanka/OpenStick-Builder
-# branch main, scripts/debootstrap.sh + scripts/setup.sh); the kernel is
-# still the postmarketOS linux-postmarketos-qcom-msm8916 .apk, extracted
-# into the rootfs the same way OpenStick-Builder's Debian build does it.
+# branch main, scripts/debootstrap.sh + scripts/setup.sh). Kernel: by
+# default the custom Linux 6.18.65 built by scripts/build-kernel.sh
+# (KERNEL_SOURCE=custom, ARCH=arm, same as branch alpine-armv7);
+# KERNEL_SOURCE=pmos falls back to extracting the postmarketOS
+# linux-postmarketos-qcom-msm8916 .apk into the rootfs, the way
+# OpenStick-Builder's Debian build does it.
 set -euo pipefail
 
 # ponytail: load order: default profile → selected profile → local overrides
@@ -36,6 +39,10 @@ DEBIAN_SECURITY_MIRROR="${DEBIAN_SECURITY_MIRROR:-http://deb.debian.org/debian-s
 PMOS_RELEASE="${PMOS_RELEASE:-v26.06}"
 PMOS_MIRROR="${PMOS_MIRROR:-http://mirror.postmarketos.org/postmarketos}"
 KERNEL_VERSION="${KERNEL_VERSION:-6.12.1-r5}"
+# Kernel source switch (see configs/kernel/README.md, docs/kernel-6.18.md):
+#   custom (default) = build Linux 6.18.65 from kernel.org (scripts/build-kernel.sh, ARCH=arm)
+#   pmos             = extract the postmarketOS kernel .apk (KERNEL_VERSION above)
+KERNEL_SOURCE="${KERNEL_SOURCE:-custom}"
 
 USERNAME="${USERNAME:-user}"
 DTB_FILE="${DTB_FILE:-msm8916-yiming-uz801v3.dtb}"
@@ -81,7 +88,7 @@ command -v debootstrap >/dev/null || { echo "ERROR: debootstrap not found (run s
 echo "[*] Profile: ${PROFILE:-default}"
 echo "[*] Output directory: $OUT_DIR"
 echo "[*] Temporary staging: $STAGING"
-echo "[*] Debian release: $RELEASE (kernel: postmarketOS $KERNEL_VERSION from $PMOS_RELEASE)"
+echo "[*] Debian release: $RELEASE (kernel source: $KERNEL_SOURCE)"
 
 # --- Bootstrap Debian (foreign + second stage, like OpenStick-Builder) ---
 mkdir -p "$CHROOT"
@@ -163,29 +170,45 @@ if [ -n "${PACKAGES:-}" ]; then
     chroot "$CHROOT" /bin/sh -c "DEBIAN_FRONTEND=noninteractive apt-get install -qqy --no-install-recommends ${_PKG_LIST}"
 fi
 
-# --- Kernel from postmarketOS (.apk extracted, OpenStick-Builder method) ---
-echo "[*] Installing postmarketOS kernel $KERNEL_VERSION..."
-# --keep-directory-symlink: the .apk carries a top-level lib/ directory;
-# extracting it over trixie's usrmerge /lib -> usr/lib symlink would
-# replace the symlink with a real directory holding only lib/modules,
-# breaking the dynamic loader (/lib/ld-linux-armhf.so.3) for every
-# subsequent chroot call.
-wget -q -O - "${PMOS_MIRROR}/${PMOS_RELEASE}/armv7/linux-postmarketos-qcom-msm8916-${KERNEL_VERSION}.apk" \
-    | tar xzf - -C "$CHROOT" --keep-directory-symlink --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null || {
-        echo "ERROR: failed to download/extract kernel apk (check KERNEL_VERSION=$KERNEL_VERSION against $PMOS_RELEASE)"
-        exit 1
-    }
-# Safety net: if /lib still ended up as a real directory, merge its
-# contents into usr/lib and restore the usrmerge symlink.
-if [ -d "$CHROOT/lib" ] && [ ! -L "$CHROOT/lib" ]; then
-    cp -a "$CHROOT/lib/." "$CHROOT/usr/lib/"
-    rm -rf "$CHROOT/lib"
-    ln -s usr/lib "$CHROOT/lib"
-fi
-# Module dependencies for the extracted kernel
-_KERNEL_REL="$(ls "$CHROOT/lib/modules" | head -n1)"
-if [ -n "$_KERNEL_REL" ]; then
-    chroot "$CHROOT" /bin/sh -c "depmod ${_KERNEL_REL} || true"
+# --- Kernel -----------------------------------------------------------------
+# KERNEL_SOURCE=custom (default): build Linux 6.18.65 with
+# scripts/build-kernel.sh (ARCH=arm, same kernel as branch
+# alpine-armv7). Runs before the DTB copy below so its DTBs land in
+# $OUT_DIR/dtbs/ and are picked up into /boot/dtbs/qcom/ by the
+# existing copy step.
+# KERNEL_SOURCE=pmos: extract the postmarketOS kernel .apk instead
+# (OpenStick-Builder method), as this branch did before.
+if [ "$KERNEL_SOURCE" = "custom" ]; then
+    echo "[*] Building custom kernel 6.18 (arm, this takes a while)..."
+    ARCH=arm KERNEL_BUILD_DIR="$STAGING/kernel-build" CHROOT="$CHROOT" OUT_DIR="$OUT_DIR" \
+        bash scripts/build-kernel.sh
+elif [ "$KERNEL_SOURCE" = "pmos" ]; then
+    echo "[*] Installing postmarketOS kernel $KERNEL_VERSION..."
+    # --keep-directory-symlink: the .apk carries a top-level lib/ directory;
+    # extracting it over trixie's usrmerge /lib -> usr/lib symlink would
+    # replace the symlink with a real directory holding only lib/modules,
+    # breaking the dynamic loader (/lib/ld-linux-armhf.so.3) for every
+    # subsequent chroot call.
+    wget -q -O - "${PMOS_MIRROR}/${PMOS_RELEASE}/armv7/linux-postmarketos-qcom-msm8916-${KERNEL_VERSION}.apk" \
+        | tar xzf - -C "$CHROOT" --keep-directory-symlink --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null || {
+            echo "ERROR: failed to download/extract kernel apk (check KERNEL_VERSION=$KERNEL_VERSION against $PMOS_RELEASE)"
+            exit 1
+        }
+    # Safety net: if /lib still ended up as a real directory, merge its
+    # contents into usr/lib and restore the usrmerge symlink.
+    if [ -d "$CHROOT/lib" ] && [ ! -L "$CHROOT/lib" ]; then
+        cp -a "$CHROOT/lib/." "$CHROOT/usr/lib/"
+        rm -rf "$CHROOT/lib"
+        ln -s usr/lib "$CHROOT/lib"
+    fi
+    # Module dependencies for the extracted kernel
+    _KERNEL_REL="$(ls "$CHROOT/lib/modules" | head -n1)"
+    if [ -n "$_KERNEL_REL" ]; then
+        chroot "$CHROOT" /bin/sh -c "depmod ${_KERNEL_REL} || true"
+    fi
+else
+    echo "ERROR: unknown KERNEL_SOURCE=$KERNEL_SOURCE (custom|pmos)" >&2
+    exit 1
 fi
 
 # --- User + base setup ---
@@ -493,7 +516,7 @@ cp "$STAGING/debian_rootfs.tgz" "$OUT_DIR/rootfs.tgz"
 
 echo "[+] OK: Debian rootfs ready in $OUT_DIR (profile: ${PROFILE:-default})"
 echo "    - Release: Debian ${RELEASE}"
-echo "    - Kernel: linux-postmarketos-qcom-msm8916 ${KERNEL_VERSION} from ${PMOS_RELEASE}"
+echo "    - Kernel: ${KERNEL_SOURCE} (custom = Linux 6.18.65, pmos = linux-postmarketos-qcom-msm8916 ${KERNEL_VERSION} from ${PMOS_RELEASE})"
 echo "    - Docker: ${DOCKER_ENABLE}"
 echo "    - Stacks: ${STACKS:-none}"
 echo "    - DTB: ${DTB_FILE}"

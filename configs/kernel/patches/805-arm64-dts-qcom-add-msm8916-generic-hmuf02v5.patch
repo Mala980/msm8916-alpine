@@ -1,0 +1,237 @@
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/msm8916-generic-hmuf02v5.dts
+@@ -0,0 +1,234 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++/dts-v1/;
++
++#include "msm8916-ufi.dtsi"
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/leds/common.h>
++
++/ {
++    model = "HMUF02-V5 4G Modem Stick";
++    compatible = "hmuf02v5,250605v0s", "qcom,msm8916";
++};
++
++/*
++ * Persistent kernel logging for debugging.
++ *
++ * This region is shared with the UFI001B memory layout and has been
++ * verified as System RAM on these MSM8916 devices.
++ */
++&reserved_memory {
++    ramoops@8db00000 {
++        compatible = "ramoops";
++        reg = <0x0 0x8db00000 0x0 0x00100000>;
++        record-size = <0x00040000>;
++        console-size = <0x00040000>;
++        pmsg-size = <0x00040000>;
++    };
++};
++
++/*
++ * HMUF02-V5 reset button
++ *
++ * Original Android firmware:
++ *
++ *   GPIO37 = key_freset
++ *   direction = input
++ *   polarity = active-high
++ *   bias = pull-down
++ *
++ * The pinhole Restart button pulls GPIO37 up to VCC when pressed.
++ * With the internal pull-up the pin idles high and a press produces
++ * no edge (so no uevent); the correct configuration is an internal
++ * pull-down (idle low) with an active-high level (press = high).
++ * Verified live on the HMUF02-V5: with bias-pull-down every press/release
++ * toggles the pin 0->1->0 and raises IRQ 40.
++ */
++&button_restart {
++    gpios = <&tlmm 37 GPIO_ACTIVE_HIGH>;
++};
++
++&button_default {
++    pins = "gpio37";
++    bias-pull-down;
++};
++
++/*
++ * HMUF02-V5 LEDs
++ *
++ * Original Android GPIO mapping:
++ *
++ *   GPIO71 = 4g_1
++ *   GPIO72 = 4g_type
++ *   GPIO73 = wifistatus
++ *
++ * Physical LEDs identified on HMUF02-V5:
++ *
++ *   GPIO71 = GREEN
++ *   GPIO72 = RED
++ *   GPIO73 = BLUE
++ *
++ * Intended OpenWrt behaviour:
++ *
++ * GREEN:
++ *   LTE/netdev activity.
++ *   The netdev trigger is selected here. The actual WWAN
++ *   interface can be selected from userspace once we determine
++ *   which BAM-DMUX netdev carries the LTE data connection.
++ *
++ * RED:
++ *   Modem status/fault LED.
++ *   Starts ON during boot.
++ *   Userspace will turn it OFF when the modem is connected and
++ *   turn it ON again if the modem/remoteproc disconnects.
++ *
++ * BLUE:
++ *   Wi-Fi status.
++ */
++
++&led_g {
++    function = LED_FUNCTION_WLAN;
++    gpios = <&tlmm 71 GPIO_ACTIVE_HIGH>;
++    default-state = "off";
++};
++
++&led_r {
++    function = LED_FUNCTION_POWER;
++    gpios = <&tlmm 72 GPIO_ACTIVE_HIGH>;
++
++    /*
++     * Red is intentionally ON during early boot.
++     *
++     * Later userspace/modem monitoring will take control:
++     *
++     *   modem connected    -> OFF
++     *   modem disconnected -> ON
++     */
++    default-state = "on";
++};
++
++&led_b {
++    function = LED_FUNCTION_WAN;
++    gpios = <&tlmm 73 GPIO_ACTIVE_HIGH>;
++    default-state = "off";
++};
++
++/*
++ * LED pin configuration.
++ *
++ * GPIO71 = green
++ * GPIO72 = red
++ * GPIO73 = blue
++ */
++&gpio_leds_default {
++    pins = "gpio71", "gpio72", "gpio73";
++};
++
++/*
++ * HMUF02-V5 board-specific GPIO initialization
++ *
++ * These GPIO states were recovered from the original Android
++ * firmware and verified against the running Android system.
++ *
++ * Android runtime state:
++ *
++ *   GPIO12   esim3_en       output LOW
++ *   GPIO14   esim2_en       output LOW
++ *   GPIO36   bat1           output LOW
++ *   GPIO106  ftest          output LOW
++ *   GPIO114  sim_hotplug    output LOW
++ *   GPIO119  esim1_en       output HIGH
++ *
++ * OpenWrt originally left several of these GPIOs as inputs.
++ *
++ * Keep them as GPIO hogs so that the board-specific electrical
++ * state is established early during TLMM initialization and
++ * retained independently of userspace.
++ */
++
++/*
++ * SIM presence / hotplug control line (TLMM GPIO114).
++ *
++ * Android exposed this as a gpio-leds sysfs node and toggled it at runtime to
++ * re-announce SIM presence to the baseband. We replicate that so userspace can
++ * pulse it on a hot SIM swap. default-state "off" drives the line LOW, which is
++ * the "SIM present" assertion the baseband expects.
++ */
++/ {
++    sim-presence {
++        compatible = "gpio-leds";
++
++        sim_hotplug {
++            gpios = <&tlmm 114 GPIO_ACTIVE_HIGH>;
++            default-state = "off";
++            linux,default-trigger = "none";
++            retain-state-suspended;
++        };
++    };
++};
++
++&tlmm {
++
++    /*
++     * Primary physical SIM enable.
++     *
++     * Android:
++     *   GPIO119 = output HIGH
++     */
++    sim1_en {
++        gpio-hog;
++        gpios = <119 GPIO_ACTIVE_HIGH>;
++        output-high;
++        line-name = "sim1_en";
++    };
++
++    /*
++     * Secondary SIM/eSIM control.
++     *
++     * Android:
++     *   GPIO14 = output LOW
++     */
++    sim2_en {
++        gpio-hog;
++        gpios = <14 GPIO_ACTIVE_HIGH>;
++        output-low;
++        line-name = "sim2_en";
++    };
++
++    /*
++     * Third SIM/eSIM control.
++     *
++     * Android:
++     *   GPIO12 = output LOW
++     */
++    sim3_en {
++        gpio-hog;
++        gpios = <12 GPIO_ACTIVE_HIGH>;
++        output-low;
++        line-name = "sim3_en";
++    };
++
++    /* sim_hotplug moved to a gpio-leds node (see /sim-presence) so userspace
++     * can toggle it to re-announce SIM presence to the baseband on hot-swap. */
++
++    /*
++     * Android "bat1" GPIO.
++     */
++    bat1 {
++        gpio-hog;
++        gpios = <36 GPIO_ACTIVE_HIGH>;
++        output-low;
++        line-name = "bat1";
++    };
++
++    /*
++     * Factory-test GPIO.
++     */
++    ftest {
++        gpio-hog;
++        gpios = <106 GPIO_ACTIVE_HIGH>;
++        output-low;
++        line-name = "ftest";
++    };
++};
