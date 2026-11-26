@@ -33,3 +33,8 @@ plugins/*/dist/
 
 __pycache__/
 *.py[cod]
+
+# Reports and state files from scheduled checks — never commit
+check-*.md
+.*-check-state.json
+.kernel618-research.md
