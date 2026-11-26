@@ -1,0 +1,11 @@
+[Unit]
+Description=Bluetooth Serial Port Profile server
+After=bluetooth.service
+# Requires bluetoothd --compat (SDP socket); not enabled by default.
+
+[Service]
+ExecStart=/usr/sbin/bt-spp-server
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

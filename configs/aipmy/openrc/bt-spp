@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# bt-spp - Bluetooth Serial Port Profile server (login shell on a
+# pty over RFCOMM channel 1). Requires bluetoothd --compat for the
+# SDP socket; see docs/aipmy-packages.md. Not enabled by default.
+description="Bluetooth SPP server"
+command="/usr/sbin/bt-spp-server"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    after bluetooth
+}
