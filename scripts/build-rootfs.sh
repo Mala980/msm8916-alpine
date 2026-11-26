@@ -39,6 +39,10 @@ OCTOPRINT_PREINSTALL="${OCTOPRINT_PREINSTALL:-no}"
 ZORAXY_PREINSTALL="${ZORAXY_PREINSTALL:-no}"
 DOCKER_ENABLE="${DOCKER_ENABLE:-no}"
 STACKS="${STACKS:-}"
+# Kernel source switch (see configs/kernel/README.md, docs/kernel-6.18.md):
+#   custom (default) = build Linux 6.18.65 from kernel.org (scripts/build-kernel.sh, ARCH=arm)
+#   pmos             = install linux-postmarketos-qcom-msm8916 from the pmOS repo
+KERNEL_SOURCE="${KERNEL_SOURCE:-custom}"
 # Profile-controlled additions (set in profiles/*.env, not here)
 PROFILE_PACKAGES="${PROFILE_PACKAGES:-}"
 PROFILE_SERVICES="${PROFILE_SERVICES:-}"
@@ -100,6 +104,14 @@ chmod a+x "$STAGING/apk.static"
 echo "[*] Bootstrapping Alpine Linux..."
 "$STAGING/apk.static" add -p "$CHROOT" --initdb -U --arch armv7 --allow-untrusted alpine-base
 
+# pmOS kernel package is only installed when falling back to it; the
+# default (custom) kernel is built by scripts/build-kernel.sh below.
+if [ "$KERNEL_SOURCE" = "pmos" ]; then
+    KERNEL_PKG="linux-postmarketos-qcom-msm8916"
+else
+    KERNEL_PKG=""
+fi
+
 echo "[*] Installing packages..."
 chroot "$CHROOT" ash -l -c "
 apk add --no-cache --no-interactive --allow-untrusted postmarketos-keys
@@ -108,7 +120,7 @@ apk add --no-cache --no-interactive \
     eudev udev-init-scripts udev-init-scripts-openrc \
     shadow sudo \
     e2fsprogs e2fsprogs-extra \
-    linux-postmarketos-qcom-msm8916 \
+    ${KERNEL_PKG:-} \
     msm-firmware-loader \
     rmtfs \
     modemmanager \
@@ -135,6 +147,18 @@ if [ -n "${PACKAGES:-}" ]; then
     _PKG_LIST="$(echo "$PACKAGES" | tr '\n' ' ' | tr -s ' ')"
     echo "[*] Installing user packages..."
     chroot "$CHROOT" ash -l -c "apk add --no-cache --no-interactive ${_PKG_LIST}"
+fi
+
+# Custom kernel (6.18, arm32) — replaces the pmOS kernel package.
+# Runs before the DTB copy below so its DTBs land in $OUT_DIR/dtbs/ and
+# are picked up into /boot/dtbs/qcom/ by the existing copy step.
+if [ "$KERNEL_SOURCE" = "custom" ]; then
+    echo "[*] Building custom kernel 6.18 (arm, this takes a while)..."
+    ARCH=arm KERNEL_BUILD_DIR="$STAGING/kernel-build" CHROOT="$CHROOT" OUT_DIR="$OUT_DIR" \
+        bash scripts/build-kernel.sh
+elif [ "$KERNEL_SOURCE" != "pmos" ]; then
+    echo "ERROR: unknown KERNEL_SOURCE=$KERNEL_SOURCE (custom|pmos)" >&2
+    exit 1
 fi
 
 # Setup Alpine
@@ -474,7 +498,7 @@ tar -C "$CHROOT" \
 cp "$STAGING/alpine_rootfs.tgz" "$OUT_DIR/rootfs.tgz"
 
 echo "[+] OK: Alpine rootfs ready in $OUT_DIR (profile: ${PROFILE:-default})"
-echo "    - Kernel: linux-postmarketos-qcom-msm8916 from ${PMOS_RELEASE}"
+echo "    - Kernel: ${KERNEL_SOURCE} (custom = Linux 6.18.65, pmos = linux-postmarketos-qcom-msm8916 ${PMOS_RELEASE})"
 echo "    - Docker: ${DOCKER_ENABLE}"
 echo "    - Stacks: ${STACKS:-none}"
 echo "    - Chrony: enabled with NTP servers"

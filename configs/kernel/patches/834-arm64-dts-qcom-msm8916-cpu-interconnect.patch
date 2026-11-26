@@ -1,0 +1,60 @@
+diff --git a/arch/arm64/boot/dts/qcom/msm8916.dtsi b/arch/arm64/boot/dts/qcom/msm8916.dtsi
+index d3a25a83..8265c08 100644
+--- a/arch/arm64/boot/dts/qcom/msm8916.dtsi
++++ b/arch/arm64/boot/dts/qcom/msm8916.dtsi
+@@ -142,6 +142,8 @@ cpu0: cpu@0 {
+ 			enable-method = "psci";
+ 			clocks = <&apcs>;
+ 			operating-points-v2 = <&cpu_opp_table>;
++			interconnects = <&bimc MASTER_AMPSS_M0 &bimc SLAVE_EBI_CH0>;
++			interconnect-names = "cpu-mem";
+ 			#cooling-cells = <2>;
+ 			power-domains = <&cpu_pd0>;
+ 			power-domain-names = "psci";
+@@ -157,6 +159,8 @@ cpu1: cpu@1 {
+ 			enable-method = "psci";
+ 			clocks = <&apcs>;
+ 			operating-points-v2 = <&cpu_opp_table>;
++			interconnects = <&bimc MASTER_AMPSS_M0 &bimc SLAVE_EBI_CH0>;
++			interconnect-names = "cpu-mem";
+ 			#cooling-cells = <2>;
+ 			power-domains = <&cpu_pd1>;
+ 			power-domain-names = "psci";
+@@ -172,6 +176,8 @@ cpu2: cpu@2 {
+ 			enable-method = "psci";
+ 			clocks = <&apcs>;
+ 			operating-points-v2 = <&cpu_opp_table>;
++			interconnects = <&bimc MASTER_AMPSS_M0 &bimc SLAVE_EBI_CH0>;
++			interconnect-names = "cpu-mem";
+ 			#cooling-cells = <2>;
+ 			power-domains = <&cpu_pd2>;
+ 			power-domain-names = "psci";
+@@ -187,6 +193,8 @@ cpu3: cpu@3 {
+ 			enable-method = "psci";
+ 			clocks = <&apcs>;
+ 			operating-points-v2 = <&cpu_opp_table>;
++			interconnects = <&bimc MASTER_AMPSS_M0 &bimc SLAVE_EBI_CH0>;
++			interconnect-names = "cpu-mem";
+ 			#cooling-cells = <2>;
+ 			power-domains = <&cpu_pd3>;
+ 			power-domain-names = "psci";
+@@ -240,15 +248,19 @@ cpu_opp_table: opp-table-cpu {
+ 
+ 		opp-200000000 {
+ 			opp-hz = /bits/ 64 <200000000>;
++			opp-peak-kBps = <3200000>;
+ 		};
+ 		opp-400000000 {
+ 			opp-hz = /bits/ 64 <400000000>;
++			opp-peak-kBps = <3200000>;
+ 		};
+ 		opp-800000000 {
+ 			opp-hz = /bits/ 64 <800000000>;
++			opp-peak-kBps = <8528000>;
+ 		};
+ 		opp-998400000 {
+ 			opp-hz = /bits/ 64 <998400000>;
++			opp-peak-kBps = <8528000>;
+ 		};
+ 	};
+ 
