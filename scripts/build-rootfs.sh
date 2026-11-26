@@ -314,8 +314,47 @@ if [ -f "$CHROOT/etc/NetworkManager/NetworkManager.conf" ]; then
         || printf '[main]\ndns=dnsmasq\n' >> "$CHROOT/etc/NetworkManager/NetworkManager.conf"
 fi
 
-# Substitute WiFi placeholders if WiFi is enabled and credentials are provided
-if [ "${WIFI_ENABLED:-yes}" = "yes" ] && [ -n "${WIFI_SSID:-}" ]; then
+# WiFi mode: "ap" (default) makes the dongle broadcast its own access point
+# on first boot: WPA2-PSK SSID "OpenStick" (password 12345678), 802.11bg
+# channel 1, 192.168.43.1/24 with NetworkManager shared-mode DHCP
+# (dnsmasq). "client" restores the previous behavior: join WIFI_SSID as a
+# station. Note: the wcn36xx firmware cannot run STA + AP at the same time.
+# See docs/wifi-ap.md.
+WIFI_MODE="${WIFI_MODE:-ap}"
+if [ "${WIFI_ENABLED:-yes}" = "yes" ] && [ "${WIFI_MODE}" = "ap" ]; then
+    echo "[*] Configuring WiFi as access point (SSID: OpenStick, channel 1, 192.168.43.1/24)"
+    WLAN_CONN="$CHROOT/etc/NetworkManager/system-connections/wlan.nmconnection"
+    cat > "$WLAN_CONN" <<'EOF'
+[connection]
+id=OpenStick
+uuid=7d3f2c10-4b5a-4e8d-9c1a-2b3c4d5e6f70
+type=wifi
+autoconnect=true
+interface-name=wlan0
+
+[wifi]
+mode=ap
+ssid=OpenStick
+band=bg
+channel=1
+powersave=2
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=12345678
+
+[ipv4]
+method=shared
+address1=192.168.43.1/24
+
+[ipv6]
+method=disabled
+
+[proxy]
+EOF
+    chmod 0600 "$WLAN_CONN"
+elif [ "${WIFI_ENABLED:-yes}" = "yes" ] && [ -n "${WIFI_SSID:-}" ]; then
+    # Substitute WiFi placeholders if WiFi is enabled and credentials are provided
     echo "[*] Configuring WiFi connection (SSID: ${WIFI_SSID})"
     WLAN_CONN="$CHROOT/etc/NetworkManager/system-connections/wlan.nmconnection"
     sed -i "s/__SSID__/${WIFI_SSID}/g" "$WLAN_CONN"
