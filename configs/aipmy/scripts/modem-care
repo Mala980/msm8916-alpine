@@ -1,0 +1,88 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# modem-care - control the modem-care services from the shell
+# (this project has no web UI; /etc/modem-care.conf + this CLI are
+# the configuration surface).
+#
+#   modem-care status            gates, service state, band lock
+#   modem-care enable  <name>    flip the conf gate on + enable/start
+#   modem-care disable <name>    flip the conf gate off + stop/disable
+#
+# <name> is one of: modem-led, wifi-led, sim-hotplug,
+# bearer-watchdog, himi-ok.  (Band locking has its own CLI:
+# modem-bandlock; carrier provisioning: carrier-autocfg.)
+
+CONF=/etc/modem-care.conf
+
+# name -> "CONF_KEY SERVICE_NAME"
+svc_map() {
+	case "$1" in
+		modem-led)       echo "MODEM_LED_ENABLED modem-led-monitor" ;;
+		wifi-led)        echo "WIFI_LED_ENABLED wifi-led-monitor" ;;
+		sim-hotplug)     echo "SIM_HOTPLUG_ENABLED sim-hotplug" ;;
+		bearer-watchdog) echo "BEARER_WATCHDOG_ENABLED modem-bearer-watchdog" ;;
+		himi-ok)         echo "HIMI_OK_ENABLED himi-ok" ;;
+		*) return 1 ;;
+	esac
+}
+NAMES="modem-led wifi-led sim-hotplug bearer-watchdog himi-ok"
+
+conf_get() { # value only: strip quotes and any trailing comment
+	sed -n "s/^$1=//p" "$CONF" 2>/dev/null | head -n1 | sed 's/[[:space:]]*#.*$//; s/"//g' | tr -d ' \r'
+}
+conf_set() {
+	if grep -q "^$1=" "$CONF" 2>/dev/null; then
+		sed -i "s|^$1=.*|$1=$2|" "$CONF"
+	else
+		echo "$1=$2" >> "$CONF"
+	fi
+}
+
+have_systemd() { command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; }
+have_openrc()  { command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; }
+
+svc_state() { # -> active/inactive/unknown
+	if have_systemd; then
+		systemctl is-active "$1" 2>/dev/null || echo inactive
+	elif have_openrc; then
+		rc-service "$1" status >/dev/null 2>&1 && echo active || echo inactive
+	else
+		echo unknown
+	fi
+}
+
+svc_on() {
+	if have_systemd; then systemctl enable --now "$1" 2>/dev/null
+	elif have_openrc; then rc-update add "$1" default 2>/dev/null; rc-service "$1" start 2>/dev/null
+	fi
+}
+svc_off() {
+	if have_systemd; then systemctl disable --now "$1" 2>/dev/null
+	elif have_openrc; then rc-service "$1" stop 2>/dev/null; rc-update del "$1" default 2>/dev/null
+	fi
+}
+
+case "${1:-status}" in
+	status)
+		printf '%-16s %-8s %s\n' "SERVICE" "GATE" "STATE"
+		for n in $NAMES; do
+			set -- $(svc_map "$n")
+			printf '%-16s %-8s %s\n' "$n" "$(conf_get "$1")" "$(svc_state "$2")"
+		done
+		echo ""
+		echo "Band lock: $(/usr/local/sbin/modem-bandlock list 2>/dev/null | tr '\n' ' ')"
+		;;
+	enable|disable)
+		act="$1"
+		m=$(svc_map "${2:-}") || { echo "usage: modem-care $act {modem-led|wifi-led|sim-hotplug|bearer-watchdog|himi-ok}" >&2; exit 2; }
+		key=$(echo "$m" | awk '{print $1}'); svc=$(echo "$m" | awk '{print $2}')
+		if [ "$act" = "enable" ]; then
+			conf_set "$key" yes; svc_on "$svc"; echo "$svc: gate=yes, service enabled"
+		else
+			conf_set "$key" no; svc_off "$svc"; echo "$svc: gate=no, service disabled"
+		fi
+		;;
+	-h|--help) sed -n '2,15p' "$0" | sed 's/^#\{0,1\} \{0,1\}//' ;;
+	*) echo "usage: modem-care {status|enable <name>|disable <name>}" >&2; exit 2 ;;
+esac

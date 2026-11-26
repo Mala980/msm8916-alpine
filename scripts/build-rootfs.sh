@@ -394,6 +394,8 @@ fi
 echo "[*] Building aipmy userspace tools..."
 mkdir -p "$CHROOT/tmp/aipmy"
 cp -a configs/aipmy/. "$CHROOT/tmp/aipmy/"
+cp configs/failsafe/button-watch.c "$CHROOT/tmp/aipmy/src/button-watch.c"
+install -Dm0644 configs/failsafe/failsafe-reset.list "$CHROOT/etc/failsafe-reset.list"
 chroot "$CHROOT" ash -l -c "
     apk add --no-cache qrtr-libs
     apk add --no-cache --virtual .aipmy-build gcc musl-dev make qrtr-dev linux-headers
@@ -401,10 +403,12 @@ chroot "$CHROOT" ash -l -c "
     apk del .aipmy-build
 "
 rm -rf "$CHROOT/tmp/aipmy"
-for svc in diag-bind qcom-time-daemon bt-spp bt-ssp-guard; do
+for svc in diag-bind qcom-time-daemon bt-spp bt-ssp-guard carrier-autocfg modem-led-monitor wifi-led-monitor sim-hotplug modem-bearer-watchdog himi-ok modem-bandlock failsafe-button; do
     install -Dm0755 "configs/aipmy/openrc/$svc" "$CHROOT/etc/init.d/$svc"
 done
-chroot "$CHROOT" ash -l -c "rc-update add diag-bind default; rc-update add bt-ssp-guard default" || true
+chroot "$CHROOT" ash -l -c "rc-update add diag-bind default; rc-update add bt-ssp-guard default; rc-update add carrier-autocfg default; rc-update add modem-led-monitor default; rc-update add wifi-led-monitor default; rc-update add sim-hotplug default; rc-update add modem-bandlock default; rc-update add failsafe-button boot" || true
+# bluetoothd --compat conf.d (for bt-spp; inert without bluez)
+install -Dm0644 configs/bluetooth/openrc/bluetooth.confd "$CHROOT/etc/conf.d/bluetooth"
 echo "[+] aipmy tools installed"
 
 # USB gadget

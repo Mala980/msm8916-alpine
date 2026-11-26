@@ -1,0 +1,180 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# carrier-autocfg - SIM carrier auto-provisioning for the MSM8916
+# dongles, adapted from aipmy/msm8916-openwrt's qcom-carrier-autocfg
+# to this builder's stack (NetworkManager + ModemManager, no UCI, no
+# procd, no web UI - everything is driven from this CLI and from
+# /etc/carrier-autocfg.conf).
+#
+# What it does: reads the inserted SIM's operator (MCC-MNC + name)
+# from ModemManager, looks the carrier up in the APN tables
+# (/etc/carrier-autocfg/custom-apns.tsv wins over
+# /usr/share/carrier-autocfg/apns.tsv), and writes the profile's APN
+# and IP type into the NetworkManager "lte" connection, then brings
+# the connection up.
+#
+# What it deliberately does NOT do: activate a carrier MCFG (MBN) on
+# the modem.  Upstream disabled that after activation-triggered modem
+# resets caused crash loops (the modem keeps serving the carrier on
+# the already-active MCFG).  The profile's MBN path is reported by
+# `status`/`list` for reference only.
+#
+# Usage:
+#   carrier-autocfg            run one provisioning pass (service mode)
+#   carrier-autocfg run-once   same as above
+#   carrier-autocfg status     show config, SIM, and applied state
+#   carrier-autocfg list       list known carriers
+#   carrier-autocfg set <x>    pin carrier <x> (MCC-MNC or name),
+#                              enable manual mode, apply now
+#   carrier-autocfg auto       enable auto mode, apply now
+#   carrier-autocfg off        disable (config ENABLED=no)
+#
+# Config: /etc/carrier-autocfg.conf (ENABLED, MODE, CARRIER, NM_CONN)
+
+CONF=/etc/carrier-autocfg.conf
+CUSTOM_DB=/etc/carrier-autocfg/custom-apns.tsv
+SYSTEM_DB=/usr/share/carrier-autocfg/apns.tsv
+STATE_DIR=/var/lib/carrier-autocfg
+TAG=carrier-autocfg
+
+ENABLED=no
+MODE=auto
+CARRIER=
+NM_CONN=lte
+MBN_DIR=/usr/share/carrier-autocfg/mcfg
+[ -f "$CONF" ] && . "$CONF"
+
+log() { logger -t "$TAG" "$*" 2>/dev/null; echo "[$TAG] $*"; }
+
+set_conf() { # set_conf KEY VALUE
+	if grep -q "^$1=" "$CONF" 2>/dev/null; then
+		sed -i "s|^$1=.*|$1=$2|" "$CONF"
+	else
+		echo "$1=$2" >> "$CONF"
+	fi
+}
+
+# lookup <code-or-name> -> prints "name|apn|iptype|mode|mbn" or nothing
+lookup() {
+	local q="$1" db match=""
+	for db in "$CUSTOM_DB" "$SYSTEM_DB"; do
+		[ -f "$db" ] || continue
+		match=$(awk -F'\t' -v q="$q" '
+			/^#/ || NF < 5 { next }
+			$1 == q { print $2"|"$3"|"$4"|"$5"|"$6; exit }
+			tolower($2) == tolower(q) { print $2"|"$3"|"$4"|"$5"|"$6; exit }
+		' "$db")
+		[ -n "$match" ] && { echo "$match"; return 0; }
+	done
+	return 1
+}
+
+modem_path() { mmcli -L 2>/dev/null | grep -o '/org/freedesktop/ModemManager1/Modem/[0-9]*' | head -n1; }
+
+sim_info() { # echoes "code name" of the inserted SIM
+	local mp kv idx
+	mp=$(modem_path); [ -n "$mp" ] || return 1
+	kv=$(mmcli -m "$mp" -K 2>/dev/null)
+	idx=$(echo "$kv" | awk -F': ' '/modem.generic.sim / {print $2}' | grep -o '[0-9]*$')
+	[ -n "$idx" ] || return 1
+	kv=$(mmcli -i "$idx" -K 2>/dev/null)
+	local code name
+	code=$(echo "$kv" | awk -F': ' '/sim.properties.operator-code/ {print $2}' | tr -d ' \r\n')
+	name=$(echo "$kv" | awk -F': ' '/sim.properties.operator-name/ {print $2}' | tr -d '\r')
+	echo "$code $name"
+}
+
+apply_profile() { # apply_profile name apn iptype mode mbn
+	local name="$1" apn="$2" iptype="$3"
+	log "provisioning '$name': APN='$apn' IP-type='$iptype' on connection '$NM_CONN'"
+	nmcli connection modify "$NM_CONN" gsm.apn "$apn" 2>/dev/null || {
+		log "ERROR: nmcli could not modify connection '$NM_CONN'"
+		return 1
+	}
+	case "$iptype" in
+		ipv4)   nmcli connection modify "$NM_CONN" ipv4.method auto ipv6.method disabled 2>/dev/null ;;
+		ipv4v6) nmcli connection modify "$NM_CONN" ipv4.method auto ipv6.method auto 2>/dev/null ;;
+		ipv6)   nmcli connection modify "$NM_CONN" ipv4.method disabled ipv6.method auto 2>/dev/null ;;
+	esac
+	nmcli connection up "$NM_CONN" >/dev/null 2>&1 || \
+		log "note: connection '$NM_CONN' did not come up (will retry on its own)"
+	mkdir -p "$STATE_DIR"
+	{ echo "carrier=$name"; echo "apn=$apn"; echo "iptype=$iptype"; date; } > "$STATE_DIR/last-applied"
+	return 0
+}
+
+run_once() {
+	[ "$ENABLED" = "yes" ] || { log "disabled (ENABLED!=yes in $CONF)"; return 0; }
+	local row name apn iptype mode mbn key
+	if [ "$MODE" = "manual" ]; then
+		[ -n "$CARRIER" ] || { log "MODE=manual but CARRIER is empty"; return 1; }
+		key="$CARRIER"
+	else
+		local info code
+		info=$(sim_info) || { log "no SIM / modem not ready; nothing to do"; return 0; }
+		code=${info%% *}
+		[ -n "$code" ] && [ "$code" != "--" ] || { log "SIM reports no operator code yet"; return 0; }
+		key="$code"
+		# Skip if this SIM was already provisioned and nothing changed.
+		if [ -f "$STATE_DIR/last-imsi" ] && [ "$(cat "$STATE_DIR/last-imsi")" = "$code" ] \
+		   && [ -f "$STATE_DIR/last-applied" ]; then
+			log "operator $code already provisioned; no change"
+			return 0
+		fi
+	fi
+	row=$(lookup "$key") || row=""
+	if [ -n "$row" ]; then
+		name=$(echo "$row" | cut -d'|' -f1); apn=$(echo "$row" | cut -d'|' -f2)
+		iptype=$(echo "$row" | cut -d'|' -f3); mode=$(echo "$row" | cut -d'|' -f4)
+		mbn=$(echo "$row" | cut -d'|' -f5)
+	else
+		log "carrier '$key' not in tables; using Generic profile (add a row to $CUSTOM_DB to customise)"
+		name="Generic"; apn="internet"; iptype="ipv4"; mode="4g"
+		mbn="generic/common/row/gen_3gpp/mcfg_sw.mbn"
+	fi
+	[ -n "$mbn" ] && log "carrier MCFG for reference: $MBN_DIR/$mbn (activation disabled by design)"
+	apply_profile "$name" "$apn" "$iptype" "$mode" "$mbn" || return 1
+	[ "$MODE" = "manual" ] || { mkdir -p "$STATE_DIR"; echo "$key" > "$STATE_DIR/last-imsi"; }
+	return 0
+}
+
+cmd_status() {
+	echo "Config ($CONF): ENABLED=$ENABLED MODE=$MODE CARRIER='${CARRIER:-}' NM_CONN=$NM_CONN"
+	local info
+	info=$(sim_info 2>/dev/null) && echo "SIM: operator-code=${info%% *} name=${info#* }" \
+		|| echo "SIM: not detected (modem/SIM not ready)"
+	echo "NM '$NM_CONN' APN: $(nmcli -g gsm.apn connection show "$NM_CONN" 2>/dev/null || echo '?')"
+	[ -f "$STATE_DIR/last-applied" ] && { echo "Last applied:"; cat "$STATE_DIR/last-applied"; }
+	if [ -d "$MBN_DIR" ]; then
+		echo "MBN blobs present under $MBN_DIR: $(find "$MBN_DIR" -name 'mcfg_sw.mbn' 2>/dev/null | wc -l) (not activated by design)"
+	else
+		echo "MBN blobs: none installed ($MBN_DIR absent; activation is disabled by design anyway)"
+	fi
+}
+
+cmd_list() {
+	awk -F'\t' '/^#/ || NF < 5 { next } { printf "%-8s %-28s apn=%-18s %s\n", $1, $2, $3, $4 }' \
+		"$SYSTEM_DB" "$CUSTOM_DB" 2>/dev/null
+}
+
+case "${1:-run-once}" in
+	run-once|run|"") run_once ;;
+	status) cmd_status ;;
+	list) cmd_list ;;
+	set)
+		[ -n "${2:-}" ] || { echo "usage: carrier-autocfg set <MCC-MNC|name>" >&2; exit 2; }
+		lookup "$2" >/dev/null || { echo "carrier-autocfg: '$2' not found in tables (see: carrier-autocfg list)" >&2; exit 1; }
+		set_conf CARRIER "$2"; set_conf MODE manual; set_conf ENABLED yes
+		ENABLED=yes; MODE=manual; CARRIER="$2"
+		run_once ;;
+	auto)
+		set_conf MODE auto; set_conf ENABLED yes
+		ENABLED=yes; MODE=auto
+		run_once ;;
+	off)
+		set_conf ENABLED no; echo "carrier-autocfg: disabled (ENABLED=no in $CONF)" ;;
+	-h|--help)
+		sed -n '2,40p' "$0" | sed 's/^#\{0,1\} \{0,1\}//' ;;
+	*) echo "usage: carrier-autocfg {run-once|status|list|set <carrier>|auto|off}" >&2; exit 2 ;;
+esac

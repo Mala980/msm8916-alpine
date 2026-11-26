@@ -1,0 +1,12 @@
+[Unit]
+Description=Failsafe button monitor (rescue mode / factory reset)
+After=local-fs.target
+Before=NetworkManager.service
+
+[Service]
+ExecStart=/usr/sbin/button-watch
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

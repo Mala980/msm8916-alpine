@@ -1,0 +1,70 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# wifi-led-monitor - drive the WLAN LED from Wi-Fi AP state, adapted
+# from aipmy/msm8916-openwrt's base-files wifi-led-monitor:
+#
+#   off   = no AP interface up
+#   on    = AP up, no clients associated
+#   blink = at least one client associated
+#
+# Works with hostapd-style netdevs (wlan0 in AP mode) as well as
+# mac80211 AP virtual interfaces (phy0-ap0).  Config:
+# /etc/modem-care.conf (WIFI_LED_ENABLED, WIFI_LED, LED_CHECK_INTERVAL).
+
+CONF=/etc/modem-care.conf
+WIFI_LED_ENABLED=yes; WIFI_LED=auto; LED_CHECK_INTERVAL=2
+[ -f "$CONF" ] && . "$CONF"
+[ "$WIFI_LED_ENABLED" = "yes" ] || { logger -t wifi-led-monitor "disabled by $CONF"; exit 0; }
+
+TAG=wifi-led-monitor
+
+resolve_led() {
+	if [ "$WIFI_LED" != "auto" ] && [ -d "/sys/class/leds/$WIFI_LED" ]; then
+		echo "/sys/class/leds/$WIFI_LED"; return 0
+	fi
+	for l in /sys/class/leds/*wlan*; do [ -d "$l" ] && { echo "$l"; return 0; }; done
+	for l in /sys/class/leds/*blue*; do [ -d "$l" ] && { echo "$l"; return 0; }; done
+	return 1
+}
+
+LED=$(resolve_led) || { logger -t $TAG "no WLAN LED found; exiting"; exit 0; }
+
+set_led() { # off|on|blink
+	[ -w "$LED/trigger" ] || return 0
+	case "$1" in
+		off)   echo none > "$LED/trigger" 2>/dev/null; echo 0 > "$LED/brightness" 2>/dev/null ;;
+		on)    echo none > "$LED/trigger" 2>/dev/null; echo 1 > "$LED/brightness" 2>/dev/null ;;
+		blink) echo timer > "$LED/trigger" 2>/dev/null
+		       echo 250 > "$LED/delay_on" 2>/dev/null; echo 250 > "$LED/delay_off" 2>/dev/null ;;
+	esac
+}
+
+ap_iface() {
+	for i in phy0-ap0 wlan0; do
+		[ -d "/sys/class/net/$i" ] || continue
+		iw dev "$i" info 2>/dev/null | grep -q 'type AP' && { echo "$i"; return 0; }
+	done
+	# Fall back: wlan0 present and not a managed station.
+	[ -d /sys/class/net/wlan0 ] && { echo wlan0; return 0; }
+	return 1
+}
+
+set_led off
+LAST=""
+while true; do
+	IF=$(ap_iface)
+	if [ -z "$IF" ]; then
+		STATE=wifi-down; V=off
+	elif iw dev "$IF" station dump 2>/dev/null | grep -q '^Station '; then
+		STATE=client-connected; V=blink
+	else
+		STATE=ap-ready; V=on
+	fi
+	if [ "$STATE" != "$LAST" ]; then
+		set_led "$V"
+		logger -t $TAG "Wi-Fi state: $STATE (LED $LED)"
+		LAST="$STATE"
+	fi
+	sleep "$LED_CHECK_INTERVAL"
+done

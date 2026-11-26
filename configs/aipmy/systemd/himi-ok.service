@@ -1,0 +1,12 @@
+[Unit]
+Description=HiMI_OK NV guard (modem NV item 2500 keeper)
+After=diag-bind.service
+Requires=diag-bind.service
+
+[Service]
+ExecStart=/usr/sbin/himi-ok-guard
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
