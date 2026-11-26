@@ -3,6 +3,10 @@
 *.bin
 *.zip
 *.mbn
+
+# Exception: vendored carrier MCFG payloads (user-approved,
+# see configs/aipmy/NOTICE) — these .mbn files ARE tracked.
+!configs/aipmy/share/mcfg/**
 *.tgz
 build
 dist
