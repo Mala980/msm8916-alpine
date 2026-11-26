@@ -55,6 +55,7 @@ install: all
 	install -Dm0644 etc/custom-apns.tsv $(DESTDIR)/etc/carrier-autocfg/custom-apns.tsv
 	install -Dm0644 share/apns.tsv $(DESTDIR)/usr/share/carrier-autocfg/apns.tsv
 	mkdir -p $(DESTDIR)/usr/share/carrier-autocfg/mcfg
+	cp -r share/mcfg/. $(DESTDIR)/usr/share/carrier-autocfg/mcfg/
 
 clean:
 	rm -f $(BINS)

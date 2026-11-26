@@ -68,8 +68,10 @@ reset → SSR → A2-handshake desync crash loop — while the modem was
 already serving the carrier fine on its already-active MCFG.
 
 This port mirrors that decision: the MBN path is reported by
-`carrier-autocfg status`/`list` for reference, nothing is loaded or
-activated, and the MBN blobs are not vendored into the image
-(`MBN_DIR` is created empty). If you keep local blob copies, drop
-them under `MBN_DIR` in the upstream layout
-(`<region>/<carrier>/<variant>/mcfg_sw.mbn`); they remain inert.
+`carrier-autocfg status`/`list` for reference, and nothing is
+loaded or activated. The MBN blobs themselves ARE vendored into
+the image (58 `mcfg_sw.mbn` payloads from aipmy/msm8916-openwrt,
+installed under `MBN_DIR` in the upstream layout
+`generic/<region>/<carrier>/<variant>/mcfg_sw.mbn`), so they are
+present on the device for manual/experimental use; they remain
+inert unless a future tool deliberately activates one.
