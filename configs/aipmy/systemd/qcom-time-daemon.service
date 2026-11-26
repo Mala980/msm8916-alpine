@@ -1,0 +1,13 @@
+[Unit]
+Description=Qualcomm QMI TIME synchronisation daemon
+After=network.target
+# Not enabled by default: upstream only runs this on one board, and
+# chrony already disciplines the clock when online. Enable with
+# `systemctl enable qcom-time-daemon` if the modem clock is wanted.
+
+[Service]
+ExecStart=/usr/sbin/qcom-time-daemon -r 0 -P /etc/qcom-time/ats -v
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

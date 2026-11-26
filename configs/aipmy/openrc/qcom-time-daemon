@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+# qcom-time-daemon - sync the system clock from the modem's QMI TIME
+# service. Arguments mirror upstream: -r 0 (indication-driven, no
+# periodic ATS writes), -P persistent ATS record, -v verbose.
+# NOT enabled by default: upstream only runs it on one board, and on
+# these images chrony already disciplines the clock when online.
+description="Qualcomm QMI TIME synchronisation daemon"
+command="/usr/sbin/qcom-time-daemon"
+command_args="-r 0 -P /etc/qcom-time/ats -v"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"

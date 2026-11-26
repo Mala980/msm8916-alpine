@@ -1,0 +1,17 @@
+#!/bin/sh
+# bt-spp-server - register the Serial Port SDP record, then run the
+# bt-spp server. Adapted from the bt-spp OpenWrt init script
+# (aipmy/msm8916-openwrt, BSD-3-Clause): the SDP database lives in
+# bluetoothd (which must run with --compat) and resets on its
+# restart, so registration happens on every start.
+i=0
+while [ "$i" -lt 60 ]; do
+    [ -S /var/run/sdp ] && hciconfig hci0 2>/dev/null | grep -q 'UP' && break
+    sleep 1; i=$((i + 1))
+done
+if [ ! -S /var/run/sdp ]; then
+    echo "bt-spp: no SDP socket (/var/run/sdp); is bluetoothd running with --compat?" >&2
+    exit 1
+fi
+sdptool records local 2>/dev/null | grep -q 'Serial Port' || sdptool add SP >/dev/null 2>&1 || true
+exec /usr/sbin/bt-spp serve --channel 1 --bridge shell --tcp-host 127.0.0.1 --tcp-port 5000

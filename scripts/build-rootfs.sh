@@ -246,6 +246,29 @@ if [ "$USB_GADGET_ADB" = "yes" ]; then
     chroot "$CHROOT" /bin/sh -c "DEBIAN_FRONTEND=noninteractive apt-get install -qqy --no-install-recommends adbd"
 fi
 
+# aipmy userspace tools — a curated set of MSM8916 utilities ported
+# from aipmy/msm8916-openwrt (vendored in configs/aipmy, see
+# docs/aipmy-packages.md): qcom-time-daemon, ats-probe, diag_efs,
+# diag_logtool, diag-bind, reboot-mode (EDL), bt-spp, bt-ssp-guard.
+# Compiled inside the chroot; the toolchain and libqrtr-dev are
+# purged again afterwards (libqrtr1 stays as the runtime library).
+echo "[*] Building aipmy userspace tools..."
+mkdir -p "$CHROOT/tmp/aipmy"
+cp -a configs/aipmy/. "$CHROOT/tmp/aipmy/"
+chroot "$CHROOT" /bin/sh -c "
+    DEBIAN_FRONTEND=noninteractive apt-get install -qqy --no-install-recommends gcc libc6-dev make libqrtr-dev
+    apt-mark manual libqrtr1 >/dev/null 2>&1 || true
+    cd /tmp/aipmy && make -f aipmy.mk -j\$(nproc) && make -f aipmy.mk install
+    DEBIAN_FRONTEND=noninteractive apt-get purge -qqy gcc libc6-dev make libqrtr-dev
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove -qqy --purge
+"
+rm -rf "$CHROOT/tmp/aipmy"
+for svc in diag-bind qcom-time-daemon bt-spp bt-ssp-guard; do
+    install -Dm0644 "configs/aipmy/systemd/$svc.service" "$CHROOT/etc/systemd/system/$svc.service"
+done
+chroot "$CHROOT" /bin/sh -c "systemctl enable diag-bind bt-ssp-guard" || true
+echo "[+] aipmy tools installed"
+
 # Chrony configuration (same as Alpine branch)
 echo "[*] Configuring Chrony..."
 mkdir -p "$CHROOT/etc/chrony"

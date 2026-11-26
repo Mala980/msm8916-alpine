@@ -1,0 +1,10 @@
+[Unit]
+Description=WCNSS Bluetooth SSP feature-bit guard
+After=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/bt-ssp-guard repair --wait
+
+[Install]
+WantedBy=multi-user.target

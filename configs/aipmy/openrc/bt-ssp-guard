@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+# bt-ssp-guard - one-shot: keep the WCNSS Bluetooth SSP feature bit
+# set in the controller NVM. The script waits internally for hci0,
+# so start it detached to avoid stalling the boot sequence.
+description="WCNSS Bluetooth SSP feature-bit guard"
+
+depend() {
+    after bluetooth
+}
+
+start() {
+    ebegin "Checking WCNSS Bluetooth SSP bit"
+    /usr/sbin/bt-ssp-guard repair --wait >/dev/null 2>&1 &
+    eend 0
+}
