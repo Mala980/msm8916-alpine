@@ -1,0 +1,9 @@
+# /etc/carrier-autocfg/custom-apns.tsv - local carrier overrides.
+#
+# Tab-separated, same format as /usr/share/carrier-autocfg/apns.tsv:
+#   MCC-MNC <TAB> Operator name <TAB> APN <TAB> IP type <TAB> Mode <TAB> MBN path
+#
+# Rows here win over the shipped table for the same MCC-MNC.  Add your
+# carrier with:  carrier-autocfg list   (to see the format in use)
+# Example:
+# 51010	Telkomsel	internet	ipv4	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn

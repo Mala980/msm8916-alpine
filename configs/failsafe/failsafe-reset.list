@@ -1,0 +1,22 @@
+# /etc/failsafe-reset.list - what a button-watch factory reset deletes.
+#
+# One entry per line.  Entries may be:
+#   - an absolute path (file or directory, deleted recursively)
+#   - a glob pattern (e.g. /var/lib/foo/*)
+#   - the token "nm-connections"  (/etc/NetworkManager/system-connections/*)
+#   - the token "ssh-host-keys"   (/etc/ssh/ssh_host_* -- new host keys are
+#                                  generated on the next boot)
+#
+# Keep this list deliberate: everything listed here is REMOVED, then the
+# device reboots.  Edit it from the shell to match what "factory state"
+# means for your deployment.
+
+nm-connections
+ssh-host-keys
+
+# Builder/runtime state that should not survive a reset
+/etc/modem-bandlock.conf
+/var/lib/carrier-autocfg
+
+# Marker dropped by first-boot customisation steps, if any
+/root/.customized

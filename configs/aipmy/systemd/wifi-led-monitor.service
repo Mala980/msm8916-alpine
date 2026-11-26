@@ -1,0 +1,11 @@
+[Unit]
+Description=Wi-Fi AP state LED monitor
+After=NetworkManager.service
+
+[Service]
+ExecStart=/usr/sbin/wifi-led-monitor
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

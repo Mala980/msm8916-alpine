@@ -1,0 +1,29 @@
+# MCC-MNC	Operator name	APN	IP type	Mode	MBN path (relative to MBN_DIR)
+# Shipped carrier table for carrier-autocfg.  Local overrides live in
+# /etc/carrier-autocfg/custom-apns.tsv and win over rows here.
+# Generic fallback applied when nothing matches: APN "internet",
+# ipv4, MBN generic/common/row/gen_3gpp/mcfg_sw.mbn.
+#
+# Indonesia (510)
+51010	Telkomsel	internet	ipv4	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+51001	Indosat Ooredoo Hutchison	internet	ipv4	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+51089	Three (Indosat)	internet	ipv4	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+51011	XL Axiata	internet	ipv4	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+51009	Smartfren	internet	ipv4	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+51028	Smartfren	internet	ipv4	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+# Nepal (429)
+42901	Nepal Telecom (NTC)	ntnet	ipv4v6	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+42902	Ncell	web	ipv4v6	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+42904	Smart Telecom	smart	ipv4v6	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+# India (404/405, selection)
+405840	Reliance Jio	jionet	ipv4v6	4g	generic/apac/reliance/commerci/mcfg_sw.mbn
+405854	Reliance Jio	jionet	ipv4v6	4g	generic/apac/reliance/commerci/mcfg_sw.mbn
+40410	Airtel	airtelgprs.com	ipv4v6	4g	generic/apac/airtel/commerci/mcfg_sw.mbn
+40411	Vodafone Idea	portalnmms	ipv4v6	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+40438	BSNL	bsnlnet	ipv4	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+# Europe / North America (selection)
+26201	Telekom.de	internet.t-d1.de	ipv4v6	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+23415	Vodafone UK	internet	ipv4v6	4g	generic/common/row/gen_3gpp/mcfg_sw.mbn
+310260	T-Mobile US	fast.t-mobile.com	ipv4v6	4g	generic/na/tmo/volte_co/mcfg_sw.mbn
+310410	AT&T	broadband	ipv4v6	4g	generic/na/att/volte/mcfg_sw.mbn
+311480	Verizon	vzwinternet	ipv4v6	4g	generic/na/verizon/hvolte/mcfg_sw.mbn

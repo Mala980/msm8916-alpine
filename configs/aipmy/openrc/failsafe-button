@@ -1,0 +1,7 @@
+#!/sbin/openrc-run
+# failsafe-button - failsafe button monitor (rescue mode / factory reset)
+description="Failsafe button monitor (rescue mode / factory reset)"
+command="/usr/sbin/button-watch"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+depend() { need localmount; before networkmanager; }

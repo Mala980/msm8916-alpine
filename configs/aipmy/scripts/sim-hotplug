@@ -1,0 +1,173 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# sim-hotplug - detect a physical SIM swap and re-announce the card
+# to the baseband.  Adapted from aipmy/msm8916-openwrt's base-files
+# sim-hotplug to this builder (config in /etc/modem-care.conf,
+# NetworkManager instead of netifd).
+#
+# Why: some MSM8916 dongles have no AP-side SIM card-detect line; the
+# modem firmware notices a REMOVAL on its own but never an INSERTION
+# (hotswap support is disabled in firmware).  The reliable AP-visible
+# presence signal is the modem's UIM card status (qmicli
+# --uim-get-card-status): while the card is out (or not yet re-read)
+# it answers "possibly-removed".  On boards that wire the
+# sim_hotplug line to an LED-class node, pulsing it makes the
+# baseband re-read an inserted card; this service pulses while the
+# card is believed absent, and never while it is present (pulsing a
+# working card keeps the baseband from settling).
+#
+# Boards without that line (e.g. UZ801) run in monitor-only mode:
+# removal/reinsertion is still observed via UIM, and ModemManager is
+# made to re-read the SIM (disable/enable cycle) so a different card's
+# IMSI/APN is picked up; the bearer is then reconnected via
+# NetworkManager.
+#
+# QMI hygiene (from upstream): always --device-open-proxy, one
+# qmicli at a time under flock + timeout, never reset the modem
+# from here.
+#
+# Usage:
+#   sim-hotplug start     run the poll loop (service)
+#   sim-hotplug rescan    force one re-announce (manual test)
+#
+# Config: /etc/modem-care.conf (SIM_HOTPLUG_ENABLED, SIM_PULSE_LED,
+# SIM_IDLE_INTERVAL, SIM_ACTIVE_INTERVAL, SIM_ABSENT_INTERVAL,
+# SIM_PULSE_MS).
+
+CONF=/etc/modem-care.conf
+SIM_HOTPLUG_ENABLED=yes; SIM_PULSE_LED=auto
+SIM_IDLE_INTERVAL=60; SIM_ACTIVE_INTERVAL=10; SIM_ABSENT_INTERVAL=20; SIM_PULSE_MS=300
+[ -f "$CONF" ] && . "$CONF"
+
+QMI_DEV=/dev/wwan0qmi0
+LOCK=/var/lock/sim-hotplug.lock
+SETTLE=4
+TAG=sim-hotplug
+
+log() { logger -t $TAG "$*"; }
+
+pulse_node() {
+	if [ "$SIM_PULSE_LED" != "auto" ] && [ -w "/sys/class/leds/$SIM_PULSE_LED/brightness" ]; then
+		echo "/sys/class/leds/$SIM_PULSE_LED/brightness"; return 0
+	fi
+	[ -w /sys/class/leds/sim_hotplug/brightness ] && { echo /sys/class/leds/sim_hotplug/brightness; return 0; }
+	return 1
+}
+PULSE=$(pulse_node || true)
+
+pulse_sim() {
+	[ -n "$PULSE" ] || return 1
+	echo 255 > "$PULSE" 2>/dev/null
+	if command -v usleep >/dev/null 2>&1; then usleep $((SIM_PULSE_MS * 1000)); else sleep 1; fi
+	echo 0 > "$PULSE" 2>/dev/null
+	return 0
+}
+
+modem_state() {
+	mmcli -m any --output-keyvalue 2>/dev/null | \
+		awk -F': ' '/^modem.generic.state / {print $2}' | tr -d ' \r'
+}
+
+# Echo: present | absent | exhaust | unknown
+uim_state() {
+	if command -v qmicli >/dev/null 2>&1 && [ -e "$QMI_DEV" ]; then
+		local out card
+		out=$(timeout 12 flock "$LOCK" qmicli --device-open-proxy -d "$QMI_DEV" \
+			--uim-get-card-status 2>&1)
+		case "$out" in
+			*ClientIdsExhausted*|*client-ids-exhausted*) echo exhaust; return ;;
+			*possibly-removed*) echo absent; return ;;
+		esac
+		card=$(printf '%s\n' "$out" | awk -F"'" '/Card state:/ {print $2; exit}')
+		case "$card" in present) echo present ;; absent) echo absent ;; *) echo unknown ;; esac
+		return
+	fi
+	# Fallback without qmicli: SIM object presence via ModemManager.
+	if mmcli -m any --output-keyvalue 2>/dev/null | grep -q 'modem.generic.sim .*:.*/SIM/'; then
+		echo present
+	else
+		echo unknown
+	fi
+}
+
+wait_register() {
+	local i=0 st
+	while [ "$i" -lt 12 ]; do
+		st=$(modem_state)
+		case "$st" in registered|connected|connecting) return 0 ;; esac
+		sleep 5; i=$((i + 1))
+	done
+	return 1
+}
+
+refresh_modem() {
+	log "re-reading the SIM through ModemManager (disable/enable)"
+	timeout 30 mmcli -m any -d >/dev/null 2>&1
+	sleep 3
+	timeout 30 mmcli -m any -e >/dev/null 2>&1
+}
+
+bring_up_bearer() {
+	log "reconnecting the lte connection"
+	nmcli connection up lte >/dev/null 2>&1 || true
+}
+
+poll_loop() {
+	[ -n "$PULSE" ] || log "no sim_hotplug pulse line on this board - monitor-only mode"
+	sleep 10
+	local removed=0 last now st u iv miss=0
+	u=$(uim_state)
+	case "$u" in
+		absent) removed=1; log "no SIM visible to the baseband - will re-announce until it appears" ;;
+		present) log "SIM present at startup" ;;
+		*) log "SIM state unknown at startup ($u)" ;;
+	esac
+	last=$(date +%s)
+	while true; do
+		if [ "$removed" -eq 1 ]; then
+			pulse_sim
+			sleep "$SETTLE"
+			u=$(uim_state); last=$(date +%s)
+			case "$u" in
+				present)
+					log "SIM detected after re-announce"; removed=0
+					if wait_register; then
+						log "modem registered"
+						refresh_modem
+						wait_register && log "modem re-registered after SIM re-read"
+						bring_up_bearer
+					else
+						log "modem not registered yet - continuing to monitor"
+					fi ;;
+				absent)
+					miss=$((miss + 1))
+					[ $((miss % 3)) -eq 0 ] && log "card still not visible after re-announce ($miss)" ;;
+				exhaust) log "QMI client IDs exhausted - backing off 60 s"; sleep 60; last=$(date +%s) ;;
+				*) miss=$((miss + 1)) ;;
+			esac
+			[ "$removed" -eq 1 ] && sleep "$SIM_ABSENT_INTERVAL"
+			continue
+		fi
+		st=$(modem_state)
+		case "$st" in registered|connected|connecting) iv=$SIM_IDLE_INTERVAL ;; *) iv=$SIM_ACTIVE_INTERVAL ;; esac
+		now=$(date +%s)
+		if [ $((now - last)) -ge "$iv" ]; then
+			u=$(uim_state); last=$now
+			case "$u" in
+				absent) log "SIM removed (UIM absent)"; removed=1 ;;
+				exhaust) log "QMI client IDs exhausted - backing off 60 s"; sleep 60; last=$(date +%s) ;;
+			esac
+		fi
+		case "$st" in registered|connected|connecting) sleep 5 ;; *) sleep 2 ;; esac
+	done
+}
+
+case "${1:-start}" in
+	rescan) pulse_sim && log "manual re-announce (rescan)" || log "rescan: no pulse line on this board" ;;
+	start)
+		[ "$SIM_HOTPLUG_ENABLED" = "yes" ] || { log "disabled by $CONF"; exit 0; }
+		poll_loop ;;
+	-h|--help) sed -n '2,40p' "$0" | sed 's/^#\{0,1\} \{0,1\}//' ;;
+	*) echo "usage: sim-hotplug {start|rescan}" >&2; exit 2 ;;
+esac

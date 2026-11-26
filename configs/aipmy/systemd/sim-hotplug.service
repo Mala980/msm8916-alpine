@@ -1,0 +1,11 @@
+[Unit]
+Description=SIM hot-swap detection and re-announce
+After=ModemManager.service
+
+[Service]
+ExecStart=/usr/sbin/sim-hotplug start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

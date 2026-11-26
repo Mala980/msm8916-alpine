@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-apply persisted modem band lock
+After=ModemManager.service
+Wants=ModemManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/modem-bandlock apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

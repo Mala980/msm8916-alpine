@@ -1,0 +1,7 @@
+#!/sbin/openrc-run
+# sim-hotplug - SIM hot-swap detection and re-announce
+description="SIM hot-swap detection and re-announce"
+command="/usr/sbin/sim-hotplug"
+command_args="start"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
