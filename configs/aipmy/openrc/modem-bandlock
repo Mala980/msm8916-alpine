@@ -1,0 +1,9 @@
+#!/sbin/openrc-run
+# modem-bandlock - re-apply the persisted band lock at boot (oneshot)
+description="Re-apply persisted modem band lock"
+depend() { after modemmanager; }
+start() {
+	ebegin "Applying persisted modem band lock"
+	/usr/local/sbin/modem-bandlock apply
+	eend 0
+}

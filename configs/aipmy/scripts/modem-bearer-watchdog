@@ -1,0 +1,144 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# modem-bearer-watchdog - detect genuine user-plane stalls on the
+# LTE bearer and recover them.  This is a compact adaptation of
+# aipmy/msm8916-openwrt's base-files modem-bearer-watchdog to this
+# builder's NetworkManager/ModemManager stack (the upstream script
+# is ~900 lines of netifd/ubus logic; the detection principles are
+# kept, the plumbing is ours):
+#
+#   * Watch wwan0 RX/TX counters.  TX advancing with RX frozen is a
+#     stall candidate - but the modem drops the first uplink packet
+#     after RRC idle (WDS dormancy), so a stall is only declared
+#     after the connectivity probe (a real DNS lookup, retried)
+#     fails on two consecutive checks.
+#   * No service (not registered home/roaming) is NOT a stall:
+#     wait for the network instead of tearing the bearer down.
+#   * Recovery: bounce the NetworkManager "lte" connection.
+#     Cooldown-bounded; after a failed recovery an extended
+#     cooldown applies so a dead link cannot churn.
+#   * Post-fatal zombie: if ModemManager has no modem object for a
+#     long stretch, nudge the modem with qmicli
+#     --dms-set-operating-mode=online (when available) and restart
+#     ModemManager once per cooldown.
+#
+# DEFAULT OFF: BEARER_WATCHDOG_ENABLED=no in /etc/modem-care.conf
+# (it can restart your data connection - opt in deliberately with
+# `modem-care enable bearer-watchdog`).
+#
+# Config: /etc/modem-care.conf (WATCHDOG_*).
+
+CONF=/etc/modem-care.conf
+BEARER_WATCHDOG_ENABLED=no
+WATCHDOG_CHECK_INTERVAL=5; WATCHDOG_STALL_TIMEOUT=30
+WATCHDOG_PROBE_TARGET=1.1.1.1; WATCHDOG_COOLDOWN=300; WATCHDOG_ZOMBIE_SECS=60
+[ -f "$CONF" ] && . "$CONF"
+[ "$BEARER_WATCHDOG_ENABLED" = "yes" ] || { logger -t modem-bearer-watchdog "disabled by $CONF"; exit 0; }
+
+TAG=modem-bearer-watchdog
+NM_CONN=lte
+IFACE=wwan0
+QMI_DEV=/dev/wwan0qmi0
+
+log() { logger -t $TAG "$*"; }
+
+rx_pkts() { cat /sys/class/net/$IFACE/statistics/rx_packets 2>/dev/null || echo 0; }
+tx_pkts() { cat /sys/class/net/$IFACE/statistics/tx_packets 2>/dev/null || echo 0; }
+
+reg_state() {
+	mmcli -m any --output-keyvalue 2>/dev/null | \
+		sed -n 's/^modem\.3gpp\.registration-state *: *//p' | head -n1
+}
+
+# Retrying DNS probe: the first packet after dormancy is routinely
+# lost, so probe up to 3 times and count RX movement, not ping rc.
+probe() {
+	local attempt pre post
+	for attempt in 1 2 3; do
+		pre=$(rx_pkts)
+		nslookup "$WATCHDOG_PROBE_TARGET" 8.8.8.8 >/dev/null 2>&1 || true
+		post=$(rx_pkts)
+		[ "$post" -gt "$pre" ] && return 0
+		[ "$attempt" -lt 3 ] && sleep 2
+	done
+	return 1
+}
+
+LAST_TX=$(tx_pkts); LAST_RX=$(rx_pkts)
+STALL=0; PROBE_FAILS=0; LAST_RECOVERY=0; RECOVERY_FAILED=0; NOMODEM_SECS=0; LAST_NUDGE=0
+
+log "started (stall_timeout=${WATCHDOG_STALL_TIMEOUT}s interval=${WATCHDOG_CHECK_INTERVAL}s cooldown=${WATCHDOG_COOLDOWN}s)"
+
+while true; do
+	sleep "$WATCHDOG_CHECK_INTERVAL"
+	NOW=$(date +%s)
+
+	# Modem object present?
+	if ! mmcli -L 2>/dev/null | grep -q '/Modem/'; then
+		NOMODEM_SECS=$((NOMODEM_SECS + WATCHDOG_CHECK_INTERVAL))
+		if [ "$NOMODEM_SECS" -ge "$WATCHDOG_ZOMBIE_SECS" ] && \
+		   [ $((NOW - LAST_NUDGE)) -ge "$WATCHDOG_COOLDOWN" ]; then
+			log "no modem object for ${NOMODEM_SECS}s - zombie nudge (DMS online + ModemManager restart)"
+			if command -v qmicli >/dev/null 2>&1 && [ -e "$QMI_DEV" ]; then
+				qmicli -d "$QMI_DEV" --dms-set-operating-mode=online >/dev/null 2>&1 || true
+			fi
+			if command -v systemctl >/dev/null 2>&1; then systemctl restart ModemManager 2>/dev/null || true
+			elif command -v rc-service >/dev/null 2>&1; then rc-service modemmanager restart 2>/dev/null || true; fi
+			LAST_NUDGE=$NOW; NOMODEM_SECS=0
+		fi
+		STALL=0; continue
+	fi
+	NOMODEM_SECS=0
+
+	CUR_TX=$(tx_pkts); CUR_RX=$(rx_pkts)
+	DTX=$((CUR_TX - LAST_TX)); DRX=$((CUR_RX - LAST_RX))
+	LAST_TX=$CUR_TX; LAST_RX=$CUR_RX
+
+	if [ "$DRX" -gt 0 ]; then
+		STALL=0; PROBE_FAILS=0; continue
+	fi
+	[ "$DTX" -gt 0 ] || [ "$STALL" -gt 0 ] || continue
+	STALL=$((STALL + WATCHDOG_CHECK_INTERVAL))
+	[ "$STALL" -ge "$WATCHDOG_STALL_TIMEOUT" ] || continue
+
+	# No service is not a stall.
+	case "$(reg_state)" in
+		home|roaming) ;;
+		*) log "no service (registration: $(reg_state)); waiting, not recovering"; STALL=0; PROBE_FAILS=0; continue ;;
+	esac
+
+	if probe; then
+		log "probe succeeded at the escalation gate; link healthy"
+		STALL=0; PROBE_FAILS=0; continue
+	fi
+	PROBE_FAILS=$((PROBE_FAILS + 1))
+	if [ "$PROBE_FAILS" -lt 2 ]; then
+		log "probe failed ($PROBE_FAILS/2) - not escalating yet (first-packet-after-dormancy looks identical)"
+		continue
+	fi
+
+	COOLDOWN=$WATCHDOG_COOLDOWN
+	[ "$RECOVERY_FAILED" = "1" ] && COOLDOWN=$((WATCHDOG_COOLDOWN * 5))
+	if [ $((NOW - LAST_RECOVERY)) -lt "$COOLDOWN" ]; then
+		log "recovery skipped: in cooldown ($((NOW - LAST_RECOVERY))s < ${COOLDOWN}s)"
+		continue
+	fi
+
+	log "STALL CONFIRMED (${STALL}s, probes failed x$PROBE_FAILS): bouncing connection '$NM_CONN'"
+	nmcli connection down "$NM_CONN" >/dev/null 2>&1 || true
+	sleep 2
+	nmcli connection up "$NM_CONN" >/dev/null 2>&1 || true
+	LAST_RECOVERY=$NOW; STALL=0; PROBE_FAILS=0
+
+	# Verify after a grace period.
+	sleep 20
+	if probe; then
+		log "recovery SUCCESS: traffic flowing again"
+		RECOVERY_FAILED=0
+	else
+		log "recovery INSUFFICIENT: still no RX; extended cooldown applies"
+		RECOVERY_FAILED=1
+	fi
+	LAST_TX=$(tx_pkts); LAST_RX=$(rx_pkts)
+done

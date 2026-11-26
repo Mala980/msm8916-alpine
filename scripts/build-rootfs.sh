@@ -255,6 +255,8 @@ fi
 echo "[*] Building aipmy userspace tools..."
 mkdir -p "$CHROOT/tmp/aipmy"
 cp -a configs/aipmy/. "$CHROOT/tmp/aipmy/"
+cp configs/failsafe/button-watch.c "$CHROOT/tmp/aipmy/src/button-watch.c"
+install -Dm0644 configs/failsafe/failsafe-reset.list "$CHROOT/etc/failsafe-reset.list"
 chroot "$CHROOT" /bin/sh -c "
     DEBIAN_FRONTEND=noninteractive apt-get install -qqy --no-install-recommends gcc libc6-dev make libqrtr-dev
     apt-mark manual libqrtr1 >/dev/null 2>&1 || true
@@ -263,10 +265,12 @@ chroot "$CHROOT" /bin/sh -c "
     DEBIAN_FRONTEND=noninteractive apt-get autoremove -qqy --purge
 "
 rm -rf "$CHROOT/tmp/aipmy"
-for svc in diag-bind qcom-time-daemon bt-spp bt-ssp-guard; do
+for svc in diag-bind qcom-time-daemon bt-spp bt-ssp-guard carrier-autocfg modem-led-monitor wifi-led-monitor sim-hotplug modem-bearer-watchdog himi-ok modem-bandlock failsafe-button; do
     install -Dm0644 "configs/aipmy/systemd/$svc.service" "$CHROOT/etc/systemd/system/$svc.service"
 done
-chroot "$CHROOT" /bin/sh -c "systemctl enable diag-bind bt-ssp-guard" || true
+chroot "$CHROOT" /bin/sh -c "systemctl enable diag-bind bt-ssp-guard carrier-autocfg modem-led-monitor wifi-led-monitor sim-hotplug modem-bandlock failsafe-button" || true
+# bluetoothd --compat drop-in (for bt-spp; inert without bluez)
+install -Dm0644 configs/bluetooth/systemd/bluetooth.service.d/compat.conf "$CHROOT/etc/systemd/system/bluetooth.service.d/compat.conf"
 echo "[+] aipmy tools installed"
 
 # Chrony configuration (same as Alpine branch)

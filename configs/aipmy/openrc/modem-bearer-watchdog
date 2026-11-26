@@ -1,0 +1,6 @@
+#!/sbin/openrc-run
+# modem-bearer-watchdog - LTE bearer stall watchdog (opt-in)
+description="LTE bearer stall watchdog (opt-in)"
+command="/usr/sbin/modem-bearer-watchdog"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"

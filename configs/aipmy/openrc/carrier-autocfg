@@ -1,0 +1,9 @@
+#!/sbin/openrc-run
+# carrier-autocfg - one provisioning pass at boot (inert when disabled)
+description="SIM carrier auto-provisioning (APN into NetworkManager)"
+depend() { after modemmanager networkmanager; }
+start() {
+	ebegin "Running carrier-autocfg provisioning pass"
+	/usr/local/sbin/carrier-autocfg run-once
+	eend $?
+}
