@@ -2,9 +2,11 @@
 
 This directory holds everything the builder needs to compile its own
 kernel instead of installing the postmarketOS `.apk` kernel
-(`linux-postmarketos-qcom-msm8916`, 6.12.1). Pilot scope: branch `main`
-(Alpine, arm64) only; the other three branches still use the pmOS
-kernel until this one is proven on hardware.
+(`linux-postmarketos-qcom-msm8916`, 6.12.1). The custom kernel ships
+on all four branches (`main`, `debian`, `alpine-armv7`,
+`debian-armv7`) as the default (`KERNEL_SOURCE=custom`); the pmOS
+kernel remains available as a fallback, and all four branches' CI
+builds are green with this kernel.
 
 ## Source
 
@@ -85,9 +87,12 @@ Ported from aipmy/msm8916-openwrt. Two sources:
 
 ## Config (`msm8916.fragment`)
 
-Base is `arch/arm64/configs/defconfig` (6.18), plus this fragment,
-finalised with `make olddefconfig` (same append-then-olddefconfig
-pattern as `scripts/setup-kernel-build.sh`). The fragment is the
+Base is `arch/arm64/configs/defconfig` (6.18) on the arm64 branches;
+the armv7 branches use `multi_v7_defconfig` plus the arm supplement
+`msm8916-arm.fragment`. Either way this fragment is appended and
+the result finalised with `make olddefconfig` (same
+append-then-olddefconfig pattern as
+`scripts/setup-kernel-build.sh`). The fragment is the
 aipmy `config-6.12` delta translated to explicit values — see the
 research file §3 for the symbol-by-symbol mapping. Hard requirements
 verified in the merged `.config`: `CGROUPS=y`, `CGROUP_SCHED=y`,
@@ -139,14 +144,16 @@ exception is the documented `LEDS_QCOM_LPG` case below).
 
 ## What build-kernel.sh produces
 
-- `arch/arm64/boot/Image.gz` → installed as `/boot/vmlinuz` in the
-  rootfs (extlinux loads `/vmlinuz`; the pmOS package shipped a gzip
-  kernel too, so the format matches).
+- `arch/arm64/boot/Image.gz` (armv7: `arch/arm/boot/zImage`) →
+  installed as `/boot/vmlinuz` in the rootfs (extlinux loads
+  `/vmlinuz`; the pmOS package shipped a gzip kernel too, so the
+  format matches).
 - Modules → `make modules_install INSTALL_MOD_PATH=<rootfs>`, landing
   in `/lib/modules/6.18.65-msm8916/` (same layout the pmOS package
   used, new version string).
 - DTBs for the three dongles (`msm8916-yiming-uz801v3`,
-  `msm8916-thwc-uf896`, `msm8916-thwc-ufi001c`) → `files/dtbs/`,
+  `msm8916-thwc-uf896`, `msm8916-thwc-ufi001c`; on armv7, compiled
+  from the wrappers in `dts-arm32/`) → `files/dtbs/`,
   overwriting the ones `build-dtb.sh` compiled from torvalds master,
   so the patched DTS (LED function names, a2-pin, interconnect, 800 MHz
   cap) is what actually boots. `build-rootfs.sh` then copies them into
@@ -160,9 +167,6 @@ postmarketOS `.apk` kernel. The old path is kept, not deleted.
 
 ## Not yet done
 
-- armv7: needs the 2-line DTS wrappers from feryw zhihe-6.18 plus
-  `multi_v7_defconfig` + the same fragment (research §5). Not in this
-  pilot; the armv7 branches keep the pmOS kernel.
 - No hardware validation yet: the kernel has been compiled locally and
   the config/patches verified, but it has never booted on a dongle.
   Flash + serial + `adb devices` + WiFi + modem are the acceptance

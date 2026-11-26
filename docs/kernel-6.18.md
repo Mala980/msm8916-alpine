@@ -1,7 +1,8 @@
 # Custom kernel 6.18 (replaces the postmarketOS kernel)
 
-Since the 6.18 pilot, branch `main` (Alpine, arm64) builds its own kernel
-instead of installing `linux-postmarketos-qcom-msm8916` from the pmOS
+Since the 6.18 rollout, all four branches (`main`, `debian`,
+`alpine-armv7`, `debian-armv7`) build their own kernel instead of
+installing `linux-postmarketos-qcom-msm8916` from the pmOS
 repository. Everything lives in `configs/kernel/`; the build is
 `scripts/build-kernel.sh`, wired into `scripts/build-rootfs.sh`.
 
@@ -19,7 +20,7 @@ repository. Everything lives in `configs/kernel/`; the build is
   TPROXY, policy routing — see `configs/kernel/README.md`).
 - The kernel is now versioned with the builder: a config/patch change is
   a normal commit, and every build publishes it through the rolling
-  `latest-main` release.
+  `latest-<branch>` releases.
 
 ## What changed vs the pmOS kernel
 
@@ -86,8 +87,8 @@ After flashing an image built with this kernel, verify on the device:
   (`scripts/setup-kernel-build.sh`); they are stale for the custom
   kernel — the equivalent is `make -C .kernel-build/linux-6.18.65
   M=<module dir>`, not yet documented as a workflow.
-- armv7 (both families) and the `debian` branches still use the pmOS
-  kernel. The armv7 path needs the feryw-style DTS wrappers
-  (`configs/kernel/dts-arm32/`, not vendored) plus `multi_v7_defconfig`;
-  `scripts/build-kernel.sh` already accepts `ARCH=arm` and fails
-  clearly until the wrappers exist.
+- armv7 (both families) builds with `scripts/build-kernel.sh`
+  (`ARCH=arm`): `multi_v7_defconfig` + `msm8916.fragment` + the
+  `msm8916-arm.fragment` supplement, the feryw-style DTS wrappers in
+  `configs/kernel/dts-arm32/`, and `zImage` instead of `Image.gz`.
+  All four branches' CI builds are green with this kernel.
