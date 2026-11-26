@@ -1,0 +1,7 @@
+#!/sbin/openrc-run
+# diag-bind - keep the SMD DIAG <-> rpmsg_chrdev bridge bound across
+# modem SSRs (supervisor loop around the idempotent diag-bind script).
+description="Qualcomm SMD DIAG rpmsg bridge keeper"
+command="/usr/sbin/diag-bind-watch"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"

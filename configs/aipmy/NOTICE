@@ -1,0 +1,18 @@
+The tools in this directory are ported from aipmy/msm8916-openwrt
+(https://github.com/aipmy/msm8916-openwrt), commit
+178f15bfbff5511be03e4a048c1c551470bf587b (2026-11-24), where they
+are OpenWrt packages. Only the userspace programs and shell scripts
+are vendored here; the OpenWrt package Makefiles are replaced by
+aipmy.mk, and the procd init scripts by the OpenRC scripts in
+openrc/ and the systemd units in systemd/.
+
+Licenses (per upstream package metadata):
+  BSD-3-Clause: qcom-time-daemon, ats-probe, bt-spp, bt-ssp-guard
+  GPL-2.0-only: diag-bind, diag-efs (diag_efs), diag-logtool
+                (diag_logtool), reboot-edl (reboot-mode)
+
+Not ported: reboot-edl's unbuilt alternate sources (reboot-edl.c,
+reboot-dload.c, reboot-mode.c — upstream only builds
+reboot-mode-raw plus the reboot-mode script), the LuCI apps, and
+qcom-carrier-autocfg (UCI/procd-coupled; its MBN blobs may follow
+separately).
